@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Text;
 using Api.Framework;
+using ConfigManager.Provider;
 using Api.Framework.Database;
 using Api.Framework.Extensions;
 using Api.Framework.Models;
@@ -14,6 +15,29 @@ using NLog.Web;
 using Swashbuckle.AspNetCore.SwaggerGen;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Redis-backed dynamic configuration (ConfigManager.Provider). Registered last so
+// operator-set values in Redis take authority over appsettings. Added only when
+// really configured: skip empty settings and the unsubstituted deploy placeholder
+// so dev/CI boot instantly instead of dialing a bogus host. Optional = true means an
+// unreachable Redis degrades gracefully back to appsettings. Keys follow
+// "newwords.api:<path>" (e.g. "newwords.api:Agents:0:Provider").
+var redisSection = builder.Configuration.GetSection("Redis");
+var redisConn = redisSection["ConnectionString"];
+var redisPrefix = redisSection["ProjectPrefix"];
+if (!string.IsNullOrWhiteSpace(redisConn)
+    && !string.IsNullOrWhiteSpace(redisPrefix)
+    && redisConn != "PRODUCTION_REDIS_CONNECTION")
+{
+    builder.Configuration.AddRedis(source =>
+    {
+        source.ProjectName = redisPrefix;
+        source.ConnectionString = redisConn;
+        source.Database = redisSection.GetValue<int>("Database");
+        source.Optional = true;
+    });
+}
+
 var logger = LoggerFactory.Create(config =>
 {
     config.AddConsole();

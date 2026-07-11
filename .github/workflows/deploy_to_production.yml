@@ -55,6 +55,7 @@ jobs:
           dotnet publish --configuration Release --output ./publish
           sed -i "s/PRODUCTION_MYSQL_PASSWORD/${{ secrets.PRODUCTION_MYSQL_PASSWORD }}/g" ./publish/appsettings.json
           sed -i "s/PRODUCTION_SYMMETRIC_SECURITY_KEY/${{ secrets.PRODUCTION_SYMMETRIC_SECURITY_KEY }}/g" ./publish/appsettings.json
+          sed -i "s|PRODUCTION_REDIS_CONNECTION|${{ secrets.PRODUCTION_REDIS_CONNECTION }}|g" ./publish/appsettings.json
           sed -i "s/XAI_API_KEY/${{ secrets.XAI_API_KEY }}/g" ./publish/appsettings.json
           sed -i "s/OPENAI_API_KEY/${{ secrets.OPENAI_API_KEY }}/g" ./publish/appsettings.json
           COMMIT_HASH=$(git rev-parse --short HEAD)
