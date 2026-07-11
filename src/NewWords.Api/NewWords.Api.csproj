@@ -7,6 +7,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- GHSA-rvv3-g6hj-g44x / CVE-2026-32933: AutoMapper DoS via uncontrolled
+         recursion. No free/MIT-licensed release is patched (the fix requires the
+         paid RPL-1.5-licensed 15.1.1+/16.1.1+), so we mitigate at the call site
+         with a global MaxDepth recursion bound — see
+         MappingProfiles/AutoMapperConfiguration.cs. Advisory suppressed below as
+         an accepted, documented risk. Any new CreateMap is covered automatically
+         by that global guard; do not remove it. GitHub issue #9. -->
     <PackageReference Include="AutoMapper" Version="12.0.1" />
     <PackageReference Include="AutoMapper.Extensions.Microsoft.DependencyInjection" Version="12.0.1" />
     <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
@@ -31,6 +38,12 @@
     <None Update="appsettings.Local.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Accepted risk, mitigated by the global MaxDepth guard in
+         MappingProfiles/AutoMapperConfiguration.cs. GitHub issue #9. -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-rvv3-g6hj-g44x" />
   </ItemGroup>
 
   <ItemGroup>
