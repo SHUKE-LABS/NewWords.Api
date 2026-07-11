@@ -24,18 +24,8 @@ namespace NewWords.Api.Services
                 try
                 {
                     var now = DateTime.UtcNow;
-                    var nextRun = DateTime.Today.AddDays(1).AddHours(2); // 2 AM next day
-
-                    if (now.Hour >= 2) // If it's already past 2 AM today, schedule for tomorrow
-                    {
-                        nextRun = DateTime.Today.AddDays(1).AddHours(2);
-                    }
-                    else // If it's before 2 AM today, schedule for today
-                    {
-                        nextRun = DateTime.Today.AddHours(2);
-                    }
-
-                    var delay = nextRun - now;
+                    var delay = ComputeDelayUntilNextRun(now);
+                    var nextRun = now + delay;
                     _logger.LogInformation($"Next story generation scheduled for: {nextRun:yyyy-MM-dd HH:mm:ss} UTC (in {delay.TotalHours:F1} hours)");
 
                     await Task.Delay(delay, stoppingToken);
@@ -57,6 +47,25 @@ namespace NewWords.Api.Services
                     await Task.Delay(TimeSpan.FromHours(1), stoppingToken);
                 }
             }
+        }
+
+        /// <summary>
+        /// Computes the delay until the next scheduled daily run. All arithmetic is done in UTC
+        /// so the result is independent of the host's local timezone: <paramref name="nowUtc"/> is
+        /// expected to be a UTC instant, and the target-hour anchor is built from <c>nowUtc.Date</c>
+        /// (a UTC calendar day). Mixing <c>DateTime.UtcNow</c> with the local-time <c>DateTime.Today</c>
+        /// previously produced a wrong or negative delay on non-UTC hosts (issue #10).
+        /// </summary>
+        internal static TimeSpan ComputeDelayUntilNextRun(DateTime nowUtc, int targetHourUtc = 2)
+        {
+            var today = nowUtc.Date; // UTC calendar-day anchor (Kind matches nowUtc)
+            var nextRun = nowUtc.Hour >= targetHourUtc
+                ? today.AddDays(1).AddHours(targetHourUtc) // already past target hour today -> tomorrow
+                : today.AddHours(targetHourUtc);           // before target hour today -> today
+
+            var delay = nextRun - nowUtc;
+            // Defensive clamp: keep Task.Delay from throwing if a future change reintroduces a negative span.
+            return delay < TimeSpan.Zero ? TimeSpan.Zero : delay;
         }
 
         private async Task GenerateStoriesAsync()
