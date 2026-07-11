@@ -66,11 +66,27 @@ dotnet run --project src/NewWords.Api --launch-profile https
 - **Agents**: LLM provider configurations (OpenRouter, etc.)
 - **SupportedLanguages**: Array of supported language codes and names
 - **AllowedCorsOrigins**: CORS configuration for frontend integration
+- **Redis**: Redis-backed dynamic configuration source (see below)
+
+### Redis-Backed Dynamic Configuration
+The `Redis` section wires the [ConfigManager.Provider](https://www.nuget.org/packages/ConfigManager.Provider) as an `IConfiguration` source, so LLM agent/model config can be adjusted through [ConfigManager.Web](https://github.com/shukebeta/ConfigManager.Web) without editing `appsettings.json` or redeploying.
+
+- **Settings**: `ConnectionString` (StackExchange.Redis format), `Database` (index, default `0`), `ProjectPrefix` (`newwords.api`).
+- **Registered last** in `Program.cs`, so values in Redis take authority over `appsettings.json`, environment variables, and command-line args.
+- **Optional**: the source is only added when the connection string and prefix are set and the connection string is not the unsubstituted `PRODUCTION_REDIS_CONNECTION` placeholder. If Redis is unreachable, the app degrades gracefully and boots from `appsettings.json`.
+- **Key format**: `newwords.api:<config-path>`. The provider strips the `newwords.api:` prefix and exposes the rest as a flat `IConfiguration` key (no JSON parsing), so arrays use the standard .NET indexed form. Examples:
+  - `newwords.api:Agents:0:Provider` → `openrouter`
+  - `newwords.api:Agents:0:BaseUrl` → `https://openrouter.ai/api/v1`
+  - `newwords.api:Agents:0:ApiKey` → `<key>`
+  - `newwords.api:Agents:0:Models:0` → `google/gemma-4-26b-a4b-it`
+  - `newwords.api:Explanation:PreferredModels:0` → `google/gemma-4-26b-a4b-it`
+- API keys live in Redis (an internal-only service; operator key visibility is accepted). Auth on the ConfigManager.Web edit path is a deployment concern (internal-only bind / reverse-proxy auth), not app code.
+- No-restart reload of these values pairs with issue #20; the provider's pub/sub reload is in place, but cached config consumers are refreshed there.
 
 ### Environment-Specific Settings
 - Development settings in `appsettings.Development.json`
 - Local development settings in `appsettings.Local.json` (git-ignored)
-- Production secrets should be replaced in `appsettings.json` (placeholders: `PRODUCTION_MYSQL_PASSWORD`, `PRODUCTION_SYMMETRIC_SECURITY_KEY`, `XAI_API_KEY`)
+- Production secrets should be replaced in `appsettings.json` (placeholders: `PRODUCTION_MYSQL_PASSWORD`, `PRODUCTION_SYMMETRIC_SECURITY_KEY`, `PRODUCTION_REDIS_CONNECTION`, `XAI_API_KEY`)
 
 ## LLM Integration
 
