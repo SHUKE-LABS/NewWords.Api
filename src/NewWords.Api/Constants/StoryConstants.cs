@@ -11,6 +11,13 @@ namespace NewWords.Api.Constants
         public const int MaxWordsPerStory = 10;
 
         /// <summary>
+        /// Maximum number of custom words accepted in a single story generation request.
+        /// Caps the number of sequential LLM calls (batched by <see cref="MaxWordsPerStory"/>)
+        /// a single request can trigger.
+        /// </summary>
+        public const int MaxCustomWordsPerRequest = 30;
+
+        /// <summary>
         /// Maximum number of words to fetch from user's recent vocabulary for story generation.
         /// </summary>
         public const int MaxRecentWordsToFetch = 8;

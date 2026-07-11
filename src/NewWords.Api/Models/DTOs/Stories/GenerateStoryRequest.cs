@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using NewWords.Api.Constants;
 
 namespace NewWords.Api.Models.DTOs.Stories
 {
@@ -11,6 +12,8 @@ namespace NewWords.Api.Models.DTOs.Stories
         /// Optional: Custom word list for story generation.
         /// If null or empty, will use user's recent vocabulary words.
         /// </summary>
+        [MaxLength(StoryConstants.MaxCustomWordsPerRequest,
+            ErrorMessage = "A story generation request accepts at most {1} custom words.")]
         public List<string>? Words { get; set; }
 
         /// <summary>
