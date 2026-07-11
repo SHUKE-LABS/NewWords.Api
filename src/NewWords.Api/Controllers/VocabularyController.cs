@@ -26,6 +26,7 @@ namespace NewWords.Api.Controllers
         /// <param name="pageNumber">Page number to retrieve.</param>
         /// <returns>Paginated list of words.</returns>
         [HttpGet]
+        [EnforcePageSizeLimit(100)]
         public async Task<ApiResult<PageData<WordExplanation>>> List(int pageSize = 10, int pageNumber = 1)
         {
             var userId = currentUser.Id;

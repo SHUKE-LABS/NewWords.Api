@@ -22,6 +22,7 @@ namespace NewWords.Api.Controllers
         /// <param name="pageNumber">Page number to retrieve.</param>
         /// <returns>Paginated list of user's stories.</returns>
         [HttpGet]
+        [EnforcePageSizeLimit(100)]
         public async Task<ApiResult<PageData<StoryDto>>> MyStories(int pageSize = 10, int pageNumber = 1)
         {
             var userId = currentUser.Id;
@@ -41,6 +42,7 @@ namespace NewWords.Api.Controllers
         /// <param name="pageNumber">Page number to retrieve.</param>
         /// <returns>Paginated list of other users' stories sorted by popularity.</returns>
         [HttpGet]
+        [EnforcePageSizeLimit(100)]
         public async Task<ApiResult<PageData<StoryDto>>> StorySquare(int pageSize = 10, int pageNumber = 1)
         {
             var userId = currentUser.Id;
@@ -60,6 +62,7 @@ namespace NewWords.Api.Controllers
         /// <param name="pageNumber">Page number to retrieve.</param>
         /// <returns>Paginated list of user's favorite stories.</returns>
         [HttpGet]
+        [EnforcePageSizeLimit(100)]
         public async Task<ApiResult<PageData<StoryDto>>> MyFavorite(int pageSize = 10, int pageNumber = 1)
         {
             var userId = currentUser.Id;
