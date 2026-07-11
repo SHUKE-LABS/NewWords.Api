@@ -35,13 +35,12 @@ namespace NewWords.Api.Services
 
             var gravatar = GravatarHelper.GetGravatarUrl(request.Email);
 
-            var (salt, password) = CommonHelper.GetSaltedPassword(request.Password);
+            var passwordHash = BCrypt.Net.BCrypt.HashPassword(request.Password, workFactor: 11);
             var newUser = new User
             {
                 Email = request.Email,
                 Gravatar = gravatar,
-                Salt = salt,
-                PasswordHash = password,
+                PasswordHash = passwordHash,
                 NativeLanguage = request.NativeLanguage,
                 CurrentLearningLanguage = request.LearningLanguage,
                 CreatedAt = DateTime.Now.ToUnixTimeSeconds(),
@@ -96,8 +95,27 @@ namespace NewWords.Api.Services
         private async Task<(bool isValidLogin, User? user)> _IsValidLogin(string email, string password)
         {
             var user = await userRepository.GetFirstOrDefaultAsync(x => x.Email == email);
-            var isValidLogin = user != null && user.PasswordHash.Equals(CommonHelper.CalculateSha256Hash(password + user.Salt));
-            return (isValidLogin, user);
+            if (user == null)
+            {
+                return (false, null);
+            }
+
+            // bcrypt hashes are prefixed with "$2"; legacy hashes are plain SHA256 hex.
+            if (user.PasswordHash.StartsWith("$2"))
+            {
+                return (BCrypt.Net.BCrypt.Verify(password, user.PasswordHash), user);
+            }
+
+            // Legacy single-round SHA256. On successful login, transparently
+            // upgrade the stored hash to bcrypt so users migrate over time.
+            var isLegacyValid = user.PasswordHash.Equals(CommonHelper.CalculateSha256Hash(password + user.Salt));
+            if (isLegacyValid)
+            {
+                user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(password, workFactor: 11);
+                await userRepository.UpdateAsync(user);
+            }
+
+            return (isLegacyValid, user);
         }
     }
 }
