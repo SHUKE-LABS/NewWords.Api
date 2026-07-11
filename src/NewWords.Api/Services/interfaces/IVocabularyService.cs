@@ -14,5 +14,11 @@ namespace NewWords.Api.Services.interfaces
         Task<IList<WordExplanation>> MemoriesOnAsync(int userId, string localTimezone, string yyyyMMdd);
         Task<ExplanationsResponse> GetAllExplanationsForWordAsync(int userId, long wordCollectionId, string learningLanguage, string explanationLanguage);
         Task SwitchUserDefaultExplanationAsync(int userId, long wordCollectionId, long newExplanationId);
+
+        /// <summary>
+        /// Fill pending explanations (all-agents-failed placeholders) via the LLM, oldest first.
+        /// Called by the background retry worker. Returns the number of rows filled.
+        /// </summary>
+        Task<int> RetryPendingExplanationsAsync(int batchSize = 20, int maxRetryCount = 20);
     }
 }

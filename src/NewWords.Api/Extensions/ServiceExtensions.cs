@@ -27,5 +27,6 @@ public static class ServiceExtensions
         services.AddSingleton<IVocabularyService, VocabularyService>();
         services.AddSingleton<IStoryService, StoryService>();
         services.AddHostedService<StoryGenerationBackgroundService>();
+        services.AddHostedService<ExplanationRetryBackgroundService>();
     }
 }

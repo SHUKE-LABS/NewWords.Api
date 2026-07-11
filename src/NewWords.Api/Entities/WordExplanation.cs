@@ -81,5 +81,20 @@ namespace NewWords.Api.Entities
         /// </summary>
         [SugarColumn(IsNullable = true, Length = 100)]
         public string? ProviderModelName { get; set; }
+
+        /// <summary>
+        /// Lifecycle state: <see cref="ExplanationStatus.Ready"/> (0) or <see cref="ExplanationStatus.Pending"/> (1).
+        /// A Pending row holds placeholder markdown and is filled later by inline re-add retry or the
+        /// background retry worker. Existing rows default to Ready.
+        /// </summary>
+        [SugarColumn(IsNullable = false, ColumnDataType = "tinyint")]
+        public ExplanationStatus Status { get; set; } = ExplanationStatus.Ready;
+
+        /// <summary>
+        /// Number of failed background retry attempts to fill a Pending explanation. Capped by the worker
+        /// so a permanently-unexplainable word stops consuming LLM calls. Defaults to 0.
+        /// </summary>
+        [SugarColumn(IsNullable = false)]
+        public int RetryCount { get; set; }
     }
 }
