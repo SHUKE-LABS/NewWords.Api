@@ -6,6 +6,7 @@ using Api.Framework.Result;
 using Microsoft.Extensions.Options;
 using NewWords.Api.Models;
 using NewWords.Api.Services.interfaces;
+using NewWords.Api.Exceptions;
 
 namespace NewWords.Api.Controllers;
 
@@ -35,7 +36,7 @@ public class AuthController(IAuthService authService, IOptions<JwtConfig> jwtCon
     {
         if (string.IsNullOrWhiteSpace(loginRequest.Email) || string.IsNullOrWhiteSpace(loginRequest.Password))
         {
-            throw new ArgumentException("Email or Password cannot be empty");
+            throw new BusinessException("Email or Password cannot be empty");
         }
         var userSession = await authService.LoginAsync(loginRequest, _jwtConfig);
         return new SuccessfulResult<UserSession>(userSession);

@@ -4,6 +4,7 @@ using FluentAssertions;
 using Moq;
 using Xunit;
 using NewWords.Api.Entities;
+using NewWords.Api.Exceptions;
 using NewWords.Api.Services;
 using Api.Framework;
 using LLM;
@@ -168,7 +169,7 @@ namespace NewWords.Api.Tests.Services
             var act = () => service.RefreshUserWordExplanationAsync(999, 100);
 
             // Assert
-            await act.Should().ThrowAsync<ArgumentException>().WithMessage("User word not found");
+            await act.Should().ThrowAsync<BusinessException>().WithMessage("User word not found");
             _languageServiceMock.Verify(l => l.GetMarkdownExplanationAsync(
                 It.IsAny<Agent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
             _wordExplanationRepoMock.Verify(r => r.InsertReturnIdentityAsync(It.IsAny<WordExplanation>()), Times.Never);

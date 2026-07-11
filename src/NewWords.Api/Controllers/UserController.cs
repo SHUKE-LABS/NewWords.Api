@@ -5,6 +5,7 @@ using NewWords.Api.Models.DTOs.User;
 using NewWords.Api.Services;
 using Api.Framework.Result;
 using NewWords.Api.Services.interfaces;
+using NewWords.Api.Exceptions;
 
 namespace NewWords.Api.Controllers
 {
@@ -21,13 +22,13 @@ namespace NewWords.Api.Controllers
             var userIdString = User.FindFirstValue(ClaimTypes.NameIdentifier);
             if (!long.TryParse(userIdString, out var userId))
             {
-                throw new Exception("Invalid user ID.");
+                throw new BusinessException("Invalid user ID.");
             }
 
             var userProfile = await userService.GetUserProfileAsync(userId);
             if (userProfile is null)
             {
-                throw new Exception("User profile not found.");
+                throw new BusinessException("User profile not found.");
             }
             return new SuccessfulResult<UserProfileDto>(userProfile, "Profile retrieved successfully.");
         }
@@ -43,7 +44,7 @@ namespace NewWords.Api.Controllers
             var userIdString = User.FindFirstValue(ClaimTypes.NameIdentifier);
             if (!int.TryParse(userIdString, out var userId))
             {
-                throw new Exception("Invalid user ID.");
+                throw new BusinessException("Invalid user ID.");
             }
 
             var success = await userService.UpdateUserProfileAsync(userId, updateDto);

@@ -2,7 +2,6 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Text;
 using Api.Framework;
 using Api.Framework.Database;
-using Api.Framework.Exceptions;
 using Api.Framework.Extensions;
 using Api.Framework.Models;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -35,7 +34,7 @@ builder.Services.AddSwaggerGen(SetupSwaggerGen());
 // Configure SQLSugar
 builder.Services.AddSqlSugarSetup(builder.Configuration.GetSection("DatabaseConnectionOptions").Get<DatabaseConnectionOptions>()!, logger);
 
-builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddExceptionHandler<NewWords.Api.Exceptions.AppExceptionHandler>();
 builder.Services.AddProblemDetails();
 builder.Services.AddCors(SetupCors(builder));
 ConfigAuthentication(builder);

@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using NewWords.Api.Entities;
 using NewWords.Api.Models.DTOs.Stories;
 using NewWords.Api.Services.interfaces;
+using NewWords.Api.Exceptions;
 
 namespace NewWords.Api.Controllers
 {
@@ -26,7 +27,7 @@ namespace NewWords.Api.Controllers
             var userId = currentUser.Id;
             if (userId == 0)
             {
-                throw new ArgumentException("User not authenticated or ID not found.");
+                throw new BusinessException("User not authenticated or ID not found.");
             }
 
             var stories = await storyService.GetUserStoriesAsync(userId, pageSize, pageNumber);
@@ -45,7 +46,7 @@ namespace NewWords.Api.Controllers
             var userId = currentUser.Id;
             if (userId == 0)
             {
-                throw new ArgumentException("User not authenticated or ID not found.");
+                throw new BusinessException("User not authenticated or ID not found.");
             }
 
             var stories = await storyService.GetStorySquareAsync(userId, pageSize, pageNumber);
@@ -64,7 +65,7 @@ namespace NewWords.Api.Controllers
             var userId = currentUser.Id;
             if (userId == 0)
             {
-                throw new ArgumentException("User not authenticated or ID not found.");
+                throw new BusinessException("User not authenticated or ID not found.");
             }
 
             var stories = await storyService.GetUserFavoriteStoriesAsync(userId, pageSize, pageNumber);
@@ -81,7 +82,7 @@ namespace NewWords.Api.Controllers
             var userId = currentUser.Id;
             if (userId == 0)
             {
-                throw new ArgumentException("User not authenticated or ID not found.");
+                throw new BusinessException("User not authenticated or ID not found.");
             }
 
             await storyService.MarkStoryAsReadAsync(userId, storyId);
@@ -98,7 +99,7 @@ namespace NewWords.Api.Controllers
             var userId = currentUser.Id;
             if (userId == 0)
             {
-                throw new ArgumentException("User not authenticated or ID not found.");
+                throw new BusinessException("User not authenticated or ID not found.");
             }
 
             var isFavorited = await storyService.ToggleFavoriteAsync(userId, storyId);
@@ -118,7 +119,7 @@ namespace NewWords.Api.Controllers
             var userId = currentUser.Id;
             if (userId == 0)
             {
-                throw new ArgumentException("User not authenticated or ID not found.");
+                throw new BusinessException("User not authenticated or ID not found.");
             }
 
             var stories = await storyService.GenerateStoryWithWordsAsync(
@@ -128,7 +129,7 @@ namespace NewWords.Api.Controllers
 
             if (stories.Count == 0)
             {
-                throw new Exception("Unable to generate stories. Please ensure you have recent vocabulary words or provide custom words.");
+                throw new BusinessException("Unable to generate stories. Please ensure you have recent vocabulary words or provide custom words.");
             }
 
             var message = stories.Count == 1 ? "Story generated successfully" : $"{stories.Count} stories generated successfully";

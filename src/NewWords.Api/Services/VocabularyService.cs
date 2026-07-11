@@ -10,6 +10,7 @@ using LLM.Services;
 using NewWords.Api.Services.interfaces;
 using System.Globalization;
 using System.Diagnostics;
+using NewWords.Api.Exceptions;
 
 namespace NewWords.Api.Services
 {
@@ -280,7 +281,7 @@ namespace NewWords.Api.Services
             if (currentExplanation == null)
             {
                 logger.LogWarning($"Word explanation not found for refresh - WordExplanationId: {wordExplanationId}");
-                throw new ArgumentException("Word explanation not found");
+                throw new BusinessException("Word explanation not found");
             }
 
             // 1b. Verify the caller actually owns this word before doing any LLM work.
@@ -290,7 +291,7 @@ namespace NewWords.Api.Services
             if (userWord == null)
             {
                 logger.LogWarning($"User word not found for refresh - UserId: {userId}, WordCollectionId: {currentExplanation.WordCollectionId}");
-                throw new ArgumentException("User word not found");
+                throw new BusinessException("User word not found");
             }
 
             // 2. Get all existing explanations for this word
@@ -791,7 +792,7 @@ namespace NewWords.Api.Services
             if (explanation == null)
             {
                 logger.LogWarning($"Explanation not found - ExplanationId: {newExplanationId}");
-                throw new ArgumentException("Explanation not found");
+                throw new BusinessException("Explanation not found");
             }
 
             if (explanation.WordCollectionId != wordCollectionId)
@@ -808,7 +809,7 @@ namespace NewWords.Api.Services
             if (userWord == null)
             {
                 logger.LogWarning($"User word not found - UserId: {userId}, WordCollectionId: {wordCollectionId}");
-                throw new ArgumentException("User word not found");
+                throw new BusinessException("User word not found");
             }
 
             userWord.WordExplanationId = newExplanationId;

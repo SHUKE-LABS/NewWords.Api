@@ -7,6 +7,7 @@ using Api.Framework.Extensions;
 using Api.Framework.Helper;
 using Api.Framework.Models;
 using NewWords.Api.Models;
+using NewWords.Api.Exceptions;
 using NewWords.Api.Services.interfaces;
 
 namespace NewWords.Api.Services
@@ -18,19 +19,19 @@ namespace NewWords.Api.Services
         {
             if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
             {
-                throw new ArgumentException("Email or Password cannot be empty");
+                throw new BusinessException("Email or Password cannot be empty");
             }
 
             if (string.IsNullOrWhiteSpace(request.LearningLanguage) || string.IsNullOrWhiteSpace(request.NativeLanguage))
             {
-                throw new ArgumentException("Learning Language or native language cannot be empty");
+                throw new BusinessException("Learning Language or native language cannot be empty");
             }
 
             request.Email = request.Email.Trim().ToLower();
             var existingUser = await userRepository.GetByEmailAsync(request.Email);
             if (existingUser != null)
             {
-                throw new Exception($"This Email ({request.Email}) has already registered before");
+                throw new BusinessException($"This Email ({request.Email}) has already registered before");
             }
 
             var gravatar = GravatarHelper.GetGravatarUrl(request.Email);
@@ -71,18 +72,18 @@ namespace NewWords.Api.Services
             var user = await userRepository.GetByEmailAsync(loginRequest.Email);
             if (user == null)
             {
-                throw new Exception("User not found");
+                throw new BusinessException("User not found");
             }
 
             var validateResult = await _IsValidLogin(loginRequest.Email, loginRequest.Password);
             if (!validateResult.isValidLogin)
             {
-                throw new Exception("Username or Password is incorrect");
+                throw new BusinessException("Username or Password is incorrect");
             }
 
             if (user.DeletedAt != null)
             {
-                throw new Exception("Sorry, your account has been deleted");
+                throw new BusinessException("Sorry, your account has been deleted");
             }
 
             var claims = TokenHelper.ClaimsGenerator(user.Id, user.Id.ToString(), user.Email);
