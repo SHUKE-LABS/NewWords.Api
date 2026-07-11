@@ -510,7 +510,7 @@ namespace NewWords.Api.Services
         /// <param name="userInput">用户原始输入</param>
         /// <param name="canonicalWord">AI返回的标准词</param>
         /// <returns>标准词的WordCollection.Id</returns>
-        private async Task<long> EnsureCanonicalWordAsync(string userInput, string canonicalWord)
+        internal async Task<long> EnsureCanonicalWordAsync(string userInput, string canonicalWord)
         {
             var currentTime = DateTime.UtcNow.ToUnixTimeSeconds();
             userInput = NormalizeWord(userInput);
