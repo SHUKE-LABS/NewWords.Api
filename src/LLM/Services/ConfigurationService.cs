@@ -5,20 +5,21 @@ namespace LLM.Services;
 
 public class ConfigurationService(IConfiguration configuration) : IConfigurationService
 {
-    private readonly List<AgentConfig> _agentConfigs = configuration.GetSection("Agents").Get<List<AgentConfig>>() ?? [];
-
-    public IReadOnlyList<string> PreferredExplanationModels { get; } = configuration
-        .GetSection("Explanation:PreferredModels")
-        .Get<List<string>>() ?? [];
-
-    private List<Agent>? _agents;
     private Dictionary<string, string>? _languageLookup;
 
     public List<Language> SupportedLanguages { get; } = configuration
         .GetSection("SupportedLanguages")
         .Get<List<Language>>() ?? [];
 
-    public List<Agent> Agents => _agents ??= _agentConfigs
+    // Agents and PreferredExplanationModels re-bind the live IConfiguration on every
+    // read so a Redis-backed reload (#20) is picked up by the next explanation request
+    // without a process restart. Each read builds its own list, so concurrent reads
+    // never share mutable state — no lock or torn list is possible.
+    public IReadOnlyList<string> PreferredExplanationModels => configuration
+        .GetSection("Explanation:PreferredModels")
+        .Get<List<string>>() ?? [];
+
+    public List<Agent> Agents => (configuration.GetSection("Agents").Get<List<AgentConfig>>() ?? [])
         .SelectMany(a => a.Models.Select(m => new Agent
         {
             Provider = a.Provider,
