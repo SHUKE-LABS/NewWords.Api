@@ -273,7 +273,7 @@ namespace NewWords.Api.Services
             }
         }
 
-        public async Task<WordExplanation> RefreshUserWordExplanationAsync(long wordExplanationId)
+        public async Task<WordExplanation> RefreshUserWordExplanationAsync(int userId, long wordExplanationId)
         {
             // 1. Get current explanation
             var currentExplanation = await wordExplanationRepository.GetFirstOrDefaultAsync(we => we.Id == wordExplanationId);
@@ -281,6 +281,16 @@ namespace NewWords.Api.Services
             {
                 logger.LogWarning($"Word explanation not found for refresh - WordExplanationId: {wordExplanationId}");
                 throw new ArgumentException("Word explanation not found");
+            }
+
+            // 1b. Verify the caller actually owns this word before doing any LLM work.
+            var userWord = await userWordRepository.GetFirstOrDefaultAsync(uw =>
+                uw.UserId == userId &&
+                uw.WordCollectionId == currentExplanation.WordCollectionId);
+            if (userWord == null)
+            {
+                logger.LogWarning($"User word not found for refresh - UserId: {userId}, WordCollectionId: {currentExplanation.WordCollectionId}");
+                throw new ArgumentException("User word not found");
             }
 
             // 2. Get all existing explanations for this word

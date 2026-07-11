@@ -7,6 +7,7 @@ using NewWords.Api.Entities;
 using NewWords.Api.Services;
 using Api.Framework;
 using LLM;
+using LLM.Models;
 using Microsoft.Extensions.Logging;
 using NewWords.Api.Repositories;
 using System.Collections.Generic;
@@ -101,6 +102,115 @@ namespace NewWords.Api.Tests.Services
             result.Should().Be(correctEntry.Id);
             _wordCollectionRepoMock.Verify(r => r.UpdateAsync(It.IsAny<WordCollection>()), Times.Never);
         }
+        [Fact]
+        public async Task RefreshUserWordExplanationAsync_Succeeds_WhenCallerOwnsWord()
+        {
+            // Arrange
+            const int userId = 42;
+            var current = new WordExplanation
+            {
+                Id = 100, WordCollectionId = 5, WordText = "apple",
+                LearningLanguage = "en", ExplanationLanguage = "zh",
+                ProviderModelName = "prov:model-a",
+            };
+            _wordExplanationRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<System.Linq.Expressions.Expression<Func<WordExplanation, bool>>>(), null))
+                .ReturnsAsync(current);
+            _userWordRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<System.Linq.Expressions.Expression<Func<UserWord, bool>>>(), null))
+                .ReturnsAsync(new UserWord { UserId = userId, WordCollectionId = 5, WordExplanationId = 100 });
+            _wordExplanationRepoMock.Setup(r => r.GetListAsync(
+                    It.IsAny<System.Linq.Expressions.Expression<Func<WordExplanation, bool>>>(), null, true))
+                .ReturnsAsync(new List<WordExplanation> { current });
+            _configServiceMock.Setup(c => c.Agents)
+                .Returns(new List<Agent> { new() { Provider = "prov", ModelName = "model-b" } });
+            _configServiceMock.Setup(c => c.GetLanguageName("en")).Returns("English");
+            _configServiceMock.Setup(c => c.GetLanguageName("zh")).Returns("Chinese");
+            _languageServiceMock.Setup(l => l.GetMarkdownExplanationAsync(
+                    It.IsAny<Agent>(), "apple", "English", "Chinese"))
+                .ReturnsAsync("new markdown");
+            _wordExplanationRepoMock.Setup(r => r.InsertReturnIdentityAsync(It.IsAny<WordExplanation>()))
+                .ReturnsAsync(200L);
+
+            var service = CreateService();
+
+            // Act
+            var result = await service.RefreshUserWordExplanationAsync(userId, 100);
+
+            // Assert
+            result.MarkdownExplanation.Should().Be("new markdown");
+            result.ProviderModelName.Should().Be("prov:model-b");
+            result.Id.Should().Be(200L);
+            _wordExplanationRepoMock.Verify(r => r.InsertReturnIdentityAsync(It.IsAny<WordExplanation>()), Times.Once);
+        }
+
+        [Fact]
+        public async Task RefreshUserWordExplanationAsync_Throws_AndDoesNoAiCallOrInsert_WhenCallerDoesNotOwnWord()
+        {
+            // Arrange
+            var current = new WordExplanation
+            {
+                Id = 100, WordCollectionId = 5, WordText = "apple",
+                LearningLanguage = "en", ExplanationLanguage = "zh",
+                ProviderModelName = "prov:model-a",
+            };
+            _wordExplanationRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<System.Linq.Expressions.Expression<Func<WordExplanation, bool>>>(), null))
+                .ReturnsAsync(current);
+            // No matching UserWord for this caller.
+            _userWordRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<System.Linq.Expressions.Expression<Func<UserWord, bool>>>(), null))
+                .ReturnsAsync((UserWord?)null);
+
+            var service = CreateService();
+
+            // Act
+            var act = () => service.RefreshUserWordExplanationAsync(999, 100);
+
+            // Assert
+            await act.Should().ThrowAsync<ArgumentException>().WithMessage("User word not found");
+            _languageServiceMock.Verify(l => l.GetMarkdownExplanationAsync(
+                It.IsAny<Agent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+            _wordExplanationRepoMock.Verify(r => r.InsertReturnIdentityAsync(It.IsAny<WordExplanation>()), Times.Never);
+        }
+
+        [Fact]
+        public async Task RefreshUserWordExplanationAsync_Throws_WhenAllModelsUsed_ForOwningCaller()
+        {
+            // Arrange
+            const int userId = 42;
+            var current = new WordExplanation
+            {
+                Id = 100, WordCollectionId = 5, WordText = "apple",
+                LearningLanguage = "en", ExplanationLanguage = "zh",
+                ProviderModelName = "prov:model-a",
+            };
+            _wordExplanationRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<System.Linq.Expressions.Expression<Func<WordExplanation, bool>>>(), null))
+                .ReturnsAsync(current);
+            _userWordRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<System.Linq.Expressions.Expression<Func<UserWord, bool>>>(), null))
+                .ReturnsAsync(new UserWord { UserId = userId, WordCollectionId = 5, WordExplanationId = 100 });
+            // The only configured model has already produced an explanation for this word.
+            _wordExplanationRepoMock.Setup(r => r.GetListAsync(
+                    It.IsAny<System.Linq.Expressions.Expression<Func<WordExplanation, bool>>>(), null, true))
+                .ReturnsAsync(new List<WordExplanation> { current });
+            _configServiceMock.Setup(c => c.Agents)
+                .Returns(new List<Agent> { new() { Provider = "prov", ModelName = "model-a" } });
+
+            var service = CreateService();
+
+            // Act
+            var act = () => service.RefreshUserWordExplanationAsync(userId, 100);
+
+            // Assert
+            await act.Should().ThrowAsync<InvalidOperationException>()
+                .WithMessage("All available models have been used for this word");
+            _languageServiceMock.Verify(l => l.GetMarkdownExplanationAsync(
+                It.IsAny<Agent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+            _wordExplanationRepoMock.Verify(r => r.InsertReturnIdentityAsync(It.IsAny<WordExplanation>()), Times.Never);
+        }
+
         [Theory]
         [InlineData("**apple**", "apple")]
         [InlineData("**take off** (phrasal verb)", "take off")]
