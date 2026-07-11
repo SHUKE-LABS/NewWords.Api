@@ -56,4 +56,39 @@ public class ConfigurationServiceRedisBindingTests
             .Should()
             .Equal("google/gemma-4-26b-a4b-it", "anthropic/claude-3.5-haiku");
     }
+
+    [Fact]
+    public void Agents_ReflectLiveConfigurationChange_WithoutReconstruction()
+    {
+        // Simulates a Redis-backed reload (#20): the IConfiguration underneath the
+        // long-lived singleton changes, and the next read must reflect it — no restart,
+        // no new ConfigurationService instance.
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Agents:0:Provider"] = "openrouter",
+                ["Agents:0:BaseUrl"] = "https://openrouter.ai/api/v1",
+                ["Agents:0:ApiKey"] = "old-key",
+                ["Agents:0:Models:0"] = "google/gemma-4-26b-a4b-it",
+                ["Explanation:PreferredModels:0"] = "google/gemma-4-26b-a4b-it",
+            })
+            .Build();
+
+        var service = new ConfigurationService(configuration);
+
+        service.Agents.Single().ApiKey.Should().Be("old-key");
+        service.PreferredExplanationModels.Should().Equal("google/gemma-4-26b-a4b-it");
+
+        // Mutate the live configuration after construction.
+        configuration["Agents:0:ApiKey"] = "new-key";
+        configuration["Agents:0:Models:1"] = "anthropic/claude-3.5-haiku";
+        configuration["Explanation:PreferredModels:0"] = "anthropic/claude-3.5-haiku";
+
+        service.Agents.Select(a => $"{a.ModelName}:{a.ApiKey}")
+            .Should()
+            .Equal(
+                "google/gemma-4-26b-a4b-it:new-key",
+                "anthropic/claude-3.5-haiku:new-key");
+        service.PreferredExplanationModels.Should().Equal("anthropic/claude-3.5-haiku");
+    }
 }
