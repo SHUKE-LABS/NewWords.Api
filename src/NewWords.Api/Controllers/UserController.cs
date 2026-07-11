@@ -4,7 +4,6 @@ using Microsoft.AspNetCore.Mvc;
 using NewWords.Api.Models.DTOs.User;
 using NewWords.Api.Services;
 using Api.Framework.Result;
-using Api.Framework.Models;
 using NewWords.Api.Services.interfaces;
 
 namespace NewWords.Api.Controllers
@@ -54,26 +53,6 @@ namespace NewWords.Api.Controllers
             }
 
             return Success("Profile updated successfully.");
-        }
-
-        /// <summary>
-        /// Retrieves a paginated list of users.
-        /// </summary>
-        /// <param name="pageSize">Number of users per page.</param>
-        /// <param name="pageNumber">Page number to retrieve.</param>
-        /// <returns>Paginated list of user profiles.</returns>
-        [HttpGet("list/{pageSize:int}/{pageNumber:int}")]
-        [EnforcePageSizeLimit(50)]
-        public async Task<ApiResult<PageData<UserProfileDto>>> GetUsers(int pageSize, int pageNumber)
-        {
-            var userIdString = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (!long.TryParse(userIdString, out var userId))
-            {
-                throw new Exception("Invalid user ID.");
-            }
-
-            var users = await userService.GetPagedUsersAsync(pageSize, pageNumber);
-            return new SuccessfulResult<PageData<UserProfileDto>>(users, "Users retrieved successfully.");
         }
     }
 }

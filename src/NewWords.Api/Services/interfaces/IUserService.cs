@@ -1,4 +1,3 @@
-using Api.Framework.Models;
 using NewWords.Api.Models.DTOs.User;
 
 namespace NewWords.Api.Services.interfaces
@@ -22,14 +21,5 @@ namespace NewWords.Api.Services.interfaces
         /// <param name="updateDto">The data to update.</param>
         /// <returns>True if the update was successful, false otherwise (e.g., user not found).</returns>
         Task<bool> UpdateUserProfileAsync(long userId, UpdateProfileRequestDto updateDto);
-
-        /// <summary>
-        /// Retrieves a paginated list of user profiles.
-        /// </summary>
-        /// <param name="pageSize">Number of users per page.</param>
-        /// <param name="pageNumber">Page number to retrieve.</param>
-        /// <param name="isAsc">Whether to sort in ascending order.</param>
-        /// <returns>Paginated list of user profiles.</returns>
-        Task<PageData<UserProfileDto>> GetPagedUsersAsync(int pageSize, int pageNumber, bool isAsc = false);
     }
 }
