@@ -5,6 +5,8 @@ using ConfigManager.Provider;
 using Api.Framework.Database;
 using Api.Framework.Extensions;
 using Api.Framework.Models;
+using LLM.Models;
+using LLM.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Cors.Infrastructure;
 using Microsoft.IdentityModel.Tokens;
@@ -46,6 +48,23 @@ var logger = LoggerFactory.Create(config =>
 
 var envName = builder.Environment.EnvironmentName;
 builder.Host.UseNLog();
+
+// Fail fast on an unsubstituted / empty agent ApiKey (issue #6). Config is final here
+// (Redis registered above), so we see the effective value. The runtime guard in
+// LanguageService only rejects null/empty, so a leftover deploy placeholder (e.g. the
+// committed "XAI_API_KEY" token) would otherwise reach the provider as a bearer token and
+// 401 silently. Warn in every environment; throw in Production so a bad deploy stops here.
+var agentConfigs = builder.Configuration.GetSection("Agents").Get<List<AgentConfig>>() ?? [];
+var apiKeyIssues = AgentApiKeyValidator.FindPlaceholderApiKeyIssues(agentConfigs);
+foreach (var issue in apiKeyIssues)
+{
+    logger.LogWarning("LLM agent config: {Issue}", issue);
+}
+if (apiKeyIssues.Count > 0 && builder.Environment.IsProduction())
+{
+    throw new InvalidOperationException(
+        "LLM agent ApiKey misconfiguration in Production: " + string.Join(" ", apiKeyIssues));
+}
 
 builder.Services.AddControllers().AddJsonOptions(options =>
 {
