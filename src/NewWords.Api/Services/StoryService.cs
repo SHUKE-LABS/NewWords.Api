@@ -283,6 +283,19 @@ namespace NewWords.Api.Services
                     wordsForStory = customWords.Where(w => !string.IsNullOrWhiteSpace(w))
                         .Select(w => w.Trim())
                         .ToList();
+
+                    // Defense in depth: cap the number of custom words so a single request
+                    // cannot trigger an unbounded number of sequential LLM calls. The primary
+                    // guard is the [MaxLength] validation on GenerateStoryRequest.Words (400);
+                    // this backstops callers that bypass model validation.
+                    if (wordsForStory.Count > StoryConstants.MaxCustomWordsPerRequest)
+                    {
+                        logger.LogWarning(
+                            "Rejecting story generation for user {UserId}: {WordCount} custom words exceeds the cap of {Cap}.",
+                            userId, wordsForStory.Count, StoryConstants.MaxCustomWordsPerRequest);
+                        return new List<Story>();
+                    }
+
                     usingRecentWords = false;
                 }
                 else
