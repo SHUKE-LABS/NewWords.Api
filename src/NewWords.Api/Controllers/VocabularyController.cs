@@ -7,6 +7,7 @@ using NewWords.Api.Services;
 using NewWords.Api.Models.DTOs.Vocabulary;
 using NewWords.Api.Services.interfaces;
 using System.Diagnostics;
+using NewWords.Api.Exceptions;
 
 namespace NewWords.Api.Controllers
 {
@@ -30,7 +31,7 @@ namespace NewWords.Api.Controllers
             var userId = currentUser.Id;
             if (userId == 0)
             {
-                throw new ArgumentException("User not authenticated or ID not found.");
+                throw new BusinessException("User not authenticated or ID not found.");
             }
 
             var words = await vocabularyService.GetUserWordsAsync(userId, pageSize, pageNumber);
@@ -86,7 +87,7 @@ namespace NewWords.Api.Controllers
             var userId = currentUser.Id;
             if (userId == 0)
             {
-                throw new ArgumentException("User not authenticated or ID not found.");
+                throw new BusinessException("User not authenticated or ID not found.");
             }
 
             await vocabularyService.DelUserWordAsync(userId, wordExplanationId);
@@ -104,7 +105,7 @@ namespace NewWords.Api.Controllers
             var userId = currentUser.Id;
             if (userId == 0)
             {
-                throw new ArgumentException("User not authenticated or ID not found.");
+                throw new BusinessException("User not authenticated or ID not found.");
             }
 
             var refreshedExplanation = await vocabularyService.RefreshUserWordExplanationAsync(userId, wordExplanationId);
@@ -122,7 +123,7 @@ namespace NewWords.Api.Controllers
             var userId = currentUser.Id;
             if (userId == 0)
             {
-                throw new ArgumentException("User not authenticated or ID not found.");
+                throw new BusinessException("User not authenticated or ID not found.");
             }
 
             var memories = await vocabularyService.MemoriesAsync(userId, localTimezone);
@@ -141,7 +142,7 @@ namespace NewWords.Api.Controllers
             var userId = currentUser.Id;
             if (userId == 0)
             {
-                throw new ArgumentException("User not authenticated or ID not found.");
+                throw new BusinessException("User not authenticated or ID not found.");
             }
 
             var memories = await vocabularyService.MemoriesOnAsync(userId, localTimezone, yyyyMMdd);
@@ -164,7 +165,7 @@ namespace NewWords.Api.Controllers
             var userId = currentUser.Id;
             if (userId == 0)
             {
-                throw new ArgumentException("User not authenticated or ID not found.");
+                throw new BusinessException("User not authenticated or ID not found.");
             }
 
             var result = await vocabularyService.GetAllExplanationsForWordAsync(
@@ -189,7 +190,7 @@ namespace NewWords.Api.Controllers
             var userId = currentUser.Id;
             if (userId == 0)
             {
-                throw new ArgumentException("User not authenticated or ID not found.");
+                throw new BusinessException("User not authenticated or ID not found.");
             }
 
             await vocabularyService.SwitchUserDefaultExplanationAsync(

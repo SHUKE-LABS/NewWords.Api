@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using NewWords.Api.Models.DTOs.User;
 using NewWords.Api.Services.interfaces;
 using Api.Framework.Result;
+using NewWords.Api.Exceptions;
 
 namespace NewWords.Api.Controllers
 {
@@ -21,7 +22,7 @@ namespace NewWords.Api.Controllers
             var userIdString = User.FindFirstValue(ClaimTypes.NameIdentifier);
             if (!long.TryParse(userIdString, out var userId))
             {
-                throw new Exception("Invalid user ID.");
+                throw new BusinessException("Invalid user ID.");
             }
 
             var success = await accountService.UpdateUserLanguagesAsync(userId, updateDto);
