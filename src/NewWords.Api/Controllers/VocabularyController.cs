@@ -107,7 +107,7 @@ namespace NewWords.Api.Controllers
                 throw new ArgumentException("User not authenticated or ID not found.");
             }
 
-            var refreshedExplanation = await vocabularyService.RefreshUserWordExplanationAsync(wordExplanationId);
+            var refreshedExplanation = await vocabularyService.RefreshUserWordExplanationAsync(userId, wordExplanationId);
             return new SuccessfulResult<WordExplanation>(refreshedExplanation);
         }
 
