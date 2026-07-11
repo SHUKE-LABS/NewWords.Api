@@ -16,6 +16,9 @@ This migration adds an `UpdatedAt` field to the `UserWords` table to enable sort
 ### 07: Multiple Explanations Support Migration
 This migration adds `WordCollectionId` to the `UserWords` table and updates the unique constraint to enable multiple AI-generated explanations per word with user-specific default selection.
 
+### 09: Pending Explanation Status Migration
+This migration adds `Status` (`TINYINT NOT NULL DEFAULT 0`; `0 = Ready`, `1 = Pending`) and `RetryCount` (`INT NOT NULL DEFAULT 0`) to the `WordExplanations` table, plus an index on `Status`. When every LLM agent fails at add-word time, the word is persisted immediately with a `Pending` placeholder explanation instead of rolling back; inline re-add retry and the `ExplanationRetryBackgroundService` (every 30 min, batch 20, `RetryCount` cap 20) later fill it and flip it to `Ready`. Idempotent; existing rows read as `Ready`.
+
 ## Migration Steps
 
 ### Phase 1: Analysis

@@ -243,10 +243,10 @@ namespace NewWords.Api.Tests.Services
         }
 
         [Fact]
-        public async Task AddUserWordAsync_AiFailure_Throws_AndPersistsNoUserWord()
+        public async Task AddUserWordAsync_AiFailure_PersistsPendingExplanation_AndUserWord()
         {
-            // Arrange: not local, AI returns a failed result. Documents today's contract:
-            // _HandleExplanation rejects the failed result -> transaction throws -> no user word.
+            // Arrange: not local, AI returns a failed result. New contract (issue #18): instead of
+            // throwing, the word is persisted with a Pending placeholder explanation and a user word.
             SetupLanguageNames();
             _wordCollectionRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
                     It.IsAny<Expression<Func<WordCollection, bool>>>(), It.IsAny<string?>()))
@@ -256,20 +256,229 @@ namespace NewWords.Api.Tests.Services
             _wordExplanationRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
                     It.IsAny<Expression<Func<WordExplanation, bool>>>(), It.IsAny<string?>()))
                 .ReturnsAsync((WordExplanation?)null);
+            WordExplanation? inserted = null;
+            _wordExplanationRepoMock.Setup(r => r.InsertReturnIdentityAsync(It.IsAny<WordExplanation>()))
+                .Callback<WordExplanation>(we => inserted = we)
+                .ReturnsAsync(200L);
             _languageServiceMock.Setup(l => l.GetMarkdownExplanationWithFallbackAsync(
                     It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
                 .ReturnsAsync(new ExplanationResult { IsSuccess = false, ErrorMessage = "boom" });
+            _userWordRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<Expression<Func<UserWord, bool>>>(), It.IsAny<string?>()))
+                .ReturnsAsync((UserWord?)null);
+            _userWordRepoMock.Setup(r => r.InsertAsync(It.IsAny<UserWord>())).ReturnsAsync(true);
 
             var service = CreateService();
 
             // Act
-            var act = () => service.AddUserWordAsync(1, "xyzzy", "en", "zh");
+            var result = await service.AddUserWordAsync(1, "xyzzy", "en", "zh");
 
-            // Assert
-            await act.Should().ThrowAsync<Exception>();
-            _userWordRepoMock.Verify(r => r.InsertAsync(It.IsAny<UserWord>()), Times.Never);
+            // Assert: pending row persisted (no model, placeholder markdown, user input as-is) and linked.
+            result.Id.Should().Be(200);
+            result.Status.Should().Be(ExplanationStatus.Pending);
+            result.ProviderModelName.Should().BeNull();
+            result.WordText.Should().Be("xyzzy");
+            result.MarkdownExplanation.Should().Contain("xyzzy");
+            inserted!.Status.Should().Be(ExplanationStatus.Pending);
+            _wordExplanationRepoMock.Verify(r => r.InsertReturnIdentityAsync(It.IsAny<WordExplanation>()), Times.Once);
+            _userWordRepoMock.Verify(r => r.InsertAsync(It.IsAny<UserWord>()), Times.Once);
             _languageServiceMock.Verify(l => l.GetMarkdownExplanationWithFallbackAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Once);
+        }
+
+        [Fact]
+        public async Task AddUserWordAsync_ReAddingPendingWord_FillsSameRowInPlace_NoNewExplanationRow()
+        {
+            // Arrange: a Pending explanation already exists for the word; re-adding triggers one inline
+            // LLM attempt that succeeds and fills the SAME row (no new explanation insert).
+            SetupLanguageNames();
+            var localWord = new WordCollection { Id = 5, WordText = "apple", DeletedAt = null };
+            var pending = new WordExplanation
+            {
+                Id = 100, WordCollectionId = 5, WordText = "apple",
+                LearningLanguage = "en", ExplanationLanguage = "zh",
+                MarkdownExplanation = "**apple**\n\n_pending_",
+                ProviderModelName = null,
+                Status = ExplanationStatus.Pending,
+            };
+            // local word lookup hit, then EnsureCanonicalWordAsync lookups (no typo: wrong==correct==apple).
+            _wordCollectionRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<Expression<Func<WordCollection, bool>>>(), It.IsAny<string?>()))
+                .ReturnsAsync(localWord);
+            _wordCollectionRepoMock.Setup(r => r.UpdateAsync(It.IsAny<WordCollection>())).ReturnsAsync(true);
+            _wordExplanationRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<Expression<Func<WordExplanation, bool>>>(), It.IsAny<string?>()))
+                .ReturnsAsync(pending);
+            _wordExplanationRepoMock.Setup(r => r.UpdateAsync(It.IsAny<WordExplanation>())).ReturnsAsync(true);
+            _languageServiceMock.Setup(l => l.GetMarkdownExplanationWithFallbackAsync("apple", "Chinese", "English"))
+                .ReturnsAsync(new ExplanationResult { IsSuccess = true, Markdown = "**apple**\nA fruit.", ModelName = "prov:model" });
+            _userWordRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<Expression<Func<UserWord, bool>>>(), It.IsAny<string?>()))
+                .ReturnsAsync((UserWord?)null);
+            _userWordRepoMock.Setup(r => r.InsertAsync(It.IsAny<UserWord>())).ReturnsAsync(true);
+
+            var service = CreateService();
+
+            // Act
+            var result = await service.AddUserWordAsync(1, "apple", "en", "zh");
+
+            // Assert: same row (Id 100), now Ready with real markdown/model; no new explanation inserted.
+            result.Id.Should().Be(100);
+            result.Status.Should().Be(ExplanationStatus.Ready);
+            result.MarkdownExplanation.Should().Be("**apple**\nA fruit.");
+            result.ProviderModelName.Should().Be("prov:model");
+            _wordExplanationRepoMock.Verify(r => r.UpdateAsync(pending), Times.Once);
+            _wordExplanationRepoMock.Verify(r => r.InsertReturnIdentityAsync(It.IsAny<WordExplanation>()), Times.Never);
+            _languageServiceMock.Verify(l => l.GetMarkdownExplanationWithFallbackAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Once);
+        }
+
+        [Fact]
+        public async Task AddUserWordAsync_ReAddingPendingWord_AiStillFailing_ReturnsRowUnchanged()
+        {
+            // Arrange: Pending row exists; inline retry LLM attempt also fails -> row returned unchanged.
+            SetupLanguageNames();
+            var localWord = new WordCollection { Id = 5, WordText = "apple", DeletedAt = null };
+            var pending = new WordExplanation
+            {
+                Id = 100, WordCollectionId = 5, WordText = "apple",
+                LearningLanguage = "en", ExplanationLanguage = "zh",
+                MarkdownExplanation = "**apple**\n\n_pending_",
+                ProviderModelName = null,
+                Status = ExplanationStatus.Pending,
+            };
+            _wordCollectionRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<Expression<Func<WordCollection, bool>>>(), It.IsAny<string?>()))
+                .ReturnsAsync(localWord);
+            _wordExplanationRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<Expression<Func<WordExplanation, bool>>>(), It.IsAny<string?>()))
+                .ReturnsAsync(pending);
+            _languageServiceMock.Setup(l => l.GetMarkdownExplanationWithFallbackAsync("apple", "Chinese", "English"))
+                .ReturnsAsync(new ExplanationResult { IsSuccess = false, ErrorMessage = "still down" });
+            _userWordRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<Expression<Func<UserWord, bool>>>(), It.IsAny<string?>()))
+                .ReturnsAsync((UserWord?)null);
+            _userWordRepoMock.Setup(r => r.InsertAsync(It.IsAny<UserWord>())).ReturnsAsync(true);
+
+            var service = CreateService();
+
+            // Act
+            var result = await service.AddUserWordAsync(1, "apple", "en", "zh");
+
+            // Assert: still pending, unchanged; no explanation write; user word still linked/bumped.
+            result.Id.Should().Be(100);
+            result.Status.Should().Be(ExplanationStatus.Pending);
+            _wordExplanationRepoMock.Verify(r => r.UpdateAsync(It.IsAny<WordExplanation>()), Times.Never);
+            _wordExplanationRepoMock.Verify(r => r.InsertReturnIdentityAsync(It.IsAny<WordExplanation>()), Times.Never);
+            _languageServiceMock.Verify(l => l.GetMarkdownExplanationWithFallbackAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Once);
+        }
+
+        // ---- RetryPendingExplanationsAsync (background worker entry point) ----
+
+        [Fact]
+        public async Task RetryPendingExplanationsAsync_Success_FillsRow_ToReady()
+        {
+            // Arrange: one pending row; AI now succeeds -> row filled in place, Ready.
+            _configServiceMock.Setup(c => c.GetLanguageName("en")).Returns("English");
+            _configServiceMock.Setup(c => c.GetLanguageName("zh")).Returns("Chinese");
+            var pending = new WordExplanation
+            {
+                Id = 100, WordCollectionId = 5, WordText = "apple",
+                LearningLanguage = "en", ExplanationLanguage = "zh",
+                Status = ExplanationStatus.Pending, RetryCount = 0,
+            };
+            var canonicalWord = new WordCollection { Id = 5, WordText = "apple", DeletedAt = null };
+            _wordExplanationRepoMock.Setup(r => r.GetListAsync(
+                    It.IsAny<int>(),
+                    It.IsAny<Expression<Func<WordExplanation, bool>>>(),
+                    It.IsAny<Expression<Func<WordExplanation, object>>>(),
+                    It.IsAny<bool>()))
+                .ReturnsAsync(new List<WordExplanation> { pending });
+            // EnsureCanonicalWordAsync: wrong == correct == "apple", QueryCount bump branch.
+            _wordCollectionRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<Expression<Func<WordCollection, bool>>>(), It.IsAny<string?>()))
+                .ReturnsAsync(canonicalWord);
+            _wordCollectionRepoMock.Setup(r => r.UpdateAsync(It.IsAny<WordCollection>())).ReturnsAsync(true);
+            _wordExplanationRepoMock.Setup(r => r.UpdateAsync(It.IsAny<WordExplanation>())).ReturnsAsync(true);
+            _languageServiceMock.Setup(l => l.GetMarkdownExplanationWithFallbackAsync("apple", "Chinese", "English"))
+                .ReturnsAsync(new ExplanationResult { IsSuccess = true, Markdown = "**apple**\nA fruit.", ModelName = "prov:model" });
+
+            var service = CreateService();
+
+            // Act
+            var filled = await service.RetryPendingExplanationsAsync();
+
+            // Assert
+            filled.Should().Be(1);
+            pending.Status.Should().Be(ExplanationStatus.Ready);
+            pending.ProviderModelName.Should().Be("prov:model");
+            pending.MarkdownExplanation.Should().Be("**apple**\nA fruit.");
+            _wordExplanationRepoMock.Verify(r => r.UpdateAsync(pending), Times.Once);
+        }
+
+        [Fact]
+        public async Task RetryPendingExplanationsAsync_Failure_IncrementsRetryCount()
+        {
+            // Arrange: one pending row; AI still fails -> RetryCount incremented, still Pending.
+            _configServiceMock.Setup(c => c.GetLanguageName("en")).Returns("English");
+            _configServiceMock.Setup(c => c.GetLanguageName("zh")).Returns("Chinese");
+            var pending = new WordExplanation
+            {
+                Id = 100, WordCollectionId = 5, WordText = "apple",
+                LearningLanguage = "en", ExplanationLanguage = "zh",
+                Status = ExplanationStatus.Pending, RetryCount = 3,
+            };
+            _wordExplanationRepoMock.Setup(r => r.GetListAsync(
+                    It.IsAny<int>(),
+                    It.IsAny<Expression<Func<WordExplanation, bool>>>(),
+                    It.IsAny<Expression<Func<WordExplanation, object>>>(),
+                    It.IsAny<bool>()))
+                .ReturnsAsync(new List<WordExplanation> { pending });
+            _wordExplanationRepoMock.Setup(r => r.UpdateAsync(It.IsAny<WordExplanation>())).ReturnsAsync(true);
+            _languageServiceMock.Setup(l => l.GetMarkdownExplanationWithFallbackAsync("apple", "Chinese", "English"))
+                .ReturnsAsync(new ExplanationResult { IsSuccess = false, ErrorMessage = "down" });
+
+            var service = CreateService();
+
+            // Act
+            var filled = await service.RetryPendingExplanationsAsync();
+
+            // Assert
+            filled.Should().Be(0);
+            pending.Status.Should().Be(ExplanationStatus.Pending);
+            pending.RetryCount.Should().Be(4);
+            _wordExplanationRepoMock.Verify(r => r.UpdateAsync(pending), Times.Once);
+        }
+
+        [Fact]
+        public async Task RetryPendingExplanationsAsync_RespectsRetryCapInBatchQuery()
+        {
+            // Arrange: verify the batch query filters out rows at/above the retry cap by exercising the
+            // predicate the service passes to GetListAsync against a capped and an eligible row.
+            _configServiceMock.Setup(c => c.GetLanguageName("en")).Returns("English");
+            _configServiceMock.Setup(c => c.GetLanguageName("zh")).Returns("Chinese");
+            Expression<Func<WordExplanation, bool>>? capturedPredicate = null;
+            _wordExplanationRepoMock.Setup(r => r.GetListAsync(
+                    It.IsAny<int>(),
+                    It.IsAny<Expression<Func<WordExplanation, bool>>>(),
+                    It.IsAny<Expression<Func<WordExplanation, object>>>(),
+                    It.IsAny<bool>()))
+                .Callback<int, Expression<Func<WordExplanation, bool>>, Expression<Func<WordExplanation, object>>, bool>(
+                    (_, where, _, _) => capturedPredicate = where)
+                .ReturnsAsync(new List<WordExplanation>());
+
+            var service = CreateService();
+
+            // Act
+            await service.RetryPendingExplanationsAsync(batchSize: 20, maxRetryCount: 20);
+
+            // Assert: predicate excludes a Pending row at the cap and includes an under-cap Pending row.
+            capturedPredicate.Should().NotBeNull();
+            var predicate = capturedPredicate!.Compile();
+            predicate(new WordExplanation { Status = ExplanationStatus.Pending, RetryCount = 20 }).Should().BeFalse();
+            predicate(new WordExplanation { Status = ExplanationStatus.Pending, RetryCount = 19 }).Should().BeTrue();
+            predicate(new WordExplanation { Status = ExplanationStatus.Ready, RetryCount = 0 }).Should().BeFalse();
         }
 
         [Fact]
