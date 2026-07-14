@@ -23,5 +23,20 @@ namespace NewWords.Api.Constants
         /// Tunable without redeploy.
         /// </summary>
         public const string FreeWordCapConfigKey = "Subscription:FreeWordCap";
+
+        /// <summary>
+        /// Distinct business error code returned when an Apple App Store transaction cannot be
+        /// verified or is not an active subscription (invalid / expired / tampered / revoked), or
+        /// when server-side Apple verification is not configured. Kept separate from the cap code
+        /// so the client can tell "verification failed" from "cap reached".
+        /// </summary>
+        public const int AppleVerificationFailedErrorCode = 42902;
+
+        /// <summary>
+        /// The <see cref="Entities.UserEntitlement.Store"/> discriminator value for grants that
+        /// come from the Apple App Store. Pairs with a future "playstore" value for the Google
+        /// Play follow-up (#24). Internal only — not surfaced in <c>EntitlementStatusDto</c>.
+        /// </summary>
+        public const string AppleStore = "appstore";
     }
 }

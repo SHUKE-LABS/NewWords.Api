@@ -66,6 +66,7 @@ dotnet run --project src/NewWords.Api --launch-profile https
 - **Agents**: LLM provider configurations (OpenRouter, etc.)
 - **SupportedLanguages**: Array of supported language codes and names
 - **AllowedCorsOrigins**: CORS configuration for frontend integration
+- **AppStore**: Apple App Store Server API credentials for receipt verification (see below)
 - **Redis**: Redis-backed dynamic configuration source (see below)
 
 ### Redis-Backed Dynamic Configuration
@@ -96,10 +97,21 @@ Once `PRODUCTION_REDIS_CONNECTION` is substituted to a real connection string, R
 3. **Only then set/change `PRODUCTION_REDIS_CONNECTION`** in the production secret.
 4. **Watch the deploy.** The deploy workflow's post-restart health gate (`.github/workflows/deploy_to_production.yml`) fails the run if the service crash-loops; also watch Seq for a few minutes for late errors.
 
+### Apple App Store Receipt Verification (issue #38)
+Clients submit a StoreKit 2 transaction id to `POST /Entitlement/VerifyApple`; the backend fetches the authoritative signed transaction from the **App Store Server API** (via `Mimo.AppStoreServerLibrary`), validates its JWS signature against Apple's certificate chain (`Certificates/AppleRootCA-G3.cer`), and on a valid active subscription upserts the #37 entitlement (`store = "appstore"`, `PremiumExpiresAt`, `OriginalTransactionId`). Restore reuses the same endpoint. Invalid / expired / tampered / revoked transactions grant nothing and return error code `42902` (`AppleVerificationFailedErrorCode`).
+
+- **`AppStore` config section**: `BundleId`, `KeyId`, `IssuerId`, `PrivateKey`, `Environment`.
+  - `PrivateKey` is the ES256 `.p8` key as **raw PEM** (convenient for Redis/Local) or **base64-encoded PEM** (single-line, deploy-secret friendly since a multiline PEM does not `sed`-substitute into JSON cleanly).
+  - `Environment`: `"Production"`, `"Sandbox"`, or empty. **Empty** = query Production first and fall back to Sandbox on a TransactionIdNotFound (4040010) error — the correct default for mixed live/sandbox transactions. Pin `"Sandbox"` for sandbox-only testing to skip the Production round-trip.
+- **Redis override keys**: `newwords.api:AppStore:BundleId`, `:KeyId`, `:IssuerId`, `:PrivateKey`, `:Environment` (re-read per verification call, so a change takes effect without restart).
+- **Not validated at boot.** Unlike the LLM keys (`AgentApiKeyValidator`, issue #6), Apple creds are deliberately **not** fail-fast: iOS is not live yet, so a missing/placeholder key must not crash-loop the service. The endpoint returns error `42902` ("not configured") until real creds are set.
+- **Sandbox coverage**: the grant/reject logic and the Production→Sandbox fallback are unit-tested via a mocked verifier seam; a real end-to-end sandbox verification requires live Apple credentials and is a manual step (not run in CI).
+- **Follow-ups (out of scope here)**: Google Play verification (#24; entitlement store is already store-agnostic) and App Store Server Notifications V2 webhook (for server-side renewal/refund tracking).
+
 ### Environment-Specific Settings
 - Development settings in `appsettings.Development.json`
 - Local development settings in `appsettings.Local.json` (git-ignored)
-- Production secrets should be replaced in `appsettings.json` (placeholders: `PRODUCTION_MYSQL_PASSWORD`, `PRODUCTION_SYMMETRIC_SECURITY_KEY`, `PRODUCTION_REDIS_CONNECTION`, `XAI_API_KEY`)
+- Production secrets should be replaced in `appsettings.json` (placeholders: `PRODUCTION_MYSQL_PASSWORD`, `PRODUCTION_SYMMETRIC_SECURITY_KEY`, `PRODUCTION_REDIS_CONNECTION`, `XAI_API_KEY`, and the Apple `AppStore` keys: `APPLE_BUNDLE_ID`, `APPLE_KEY_ID`, `APPLE_ISSUER_ID`, `APPLE_APP_STORE_PRIVATE_KEY`)
 
 ## LLM Integration
 
