@@ -23,6 +23,7 @@
     <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.14.0" />
     <PackageReference Include="Microsoft.IdentityModel.Protocols" Version="8.14.0" />
     <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.14.0" />
+    <PackageReference Include="Mimo.AppStoreServerLibrary" Version="0.1.1" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.14.0" />
     <PackageReference Include="SqlSugarCore" Version="5.1.4.214" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.1" />
@@ -37,6 +38,11 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="appsettings.Local.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!-- Apple Root CA - G3 (public), the ECC root the StoreKit JWS chain terminates at.
+         Loaded at runtime by AppStoreTransactionClient to verify signed transactions. -->
+    <None Update="Certificates\AppleRootCA-G3.cer">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

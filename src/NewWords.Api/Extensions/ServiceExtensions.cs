@@ -4,6 +4,7 @@ using LLM.Services;
 using NewWords.Api.Helpers;
 using NewWords.Api.Repositories;
 using NewWords.Api.Services;
+using NewWords.Api.Services.AppleAppStore;
 using NewWords.Api.Services.interfaces;
 
 namespace NewWords.Api.Extensions;
@@ -25,6 +26,9 @@ public static class ServiceExtensions
         services.AddScoped<ICurrentUser, CurrentUser>();
         services.AddScoped<IAuthService, AuthService>();
         services.AddSingleton<IEntitlementService, EntitlementService>();
+        services.AddSingleton<IAppStoreTransactionClient, AppStoreTransactionClient>();
+        services.AddSingleton<IAppleTransactionVerifier, AppleTransactionVerifier>();
+        services.AddSingleton<IAppStoreService, AppStoreService>();
         services.AddSingleton<IVocabularyService, VocabularyService>();
         services.AddSingleton<IStoryService, StoryService>();
         services.AddHostedService<StoryGenerationBackgroundService>();
