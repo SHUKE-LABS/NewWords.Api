@@ -45,8 +45,9 @@ dotnet run --project src/NewWords.Api --launch-profile https
 
 ### Database
 - Uses SqlSugar ORM with MySQL
-- Database migrations are handled through Alembic (Python-based migration tool)
 - Connection configuration in `appsettings.json` under `DatabaseConnectionOptions`
+- Database migrations are ordered, idempotent SQL scripts in `migration_scripts/` (`NN_<name>.sql`)
+- **Applied automatically on deploy** (issue #41): `migration_scripts/apply_migrations.sh` runs on the VPS during `deploy_to_production.yml`, after files are copied and before the service restarts, tracked by a `schema_migrations` ledger so each script runs exactly once. A migration failure fails the deploy before restart. Add a migration by dropping the next-numbered idempotent `NN_*.sql`; see `migration_scripts/README.md` (including the one-time baseline precondition for the first automated deploy).
 
 ### Development URLs
 - HTTP: http://localhost:5116

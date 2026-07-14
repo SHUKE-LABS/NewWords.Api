@@ -53,6 +53,9 @@ jobs:
       - name: Publish
         run: |
           dotnet publish --configuration Release --output ./publish
+          # Ship the migration scripts + runner so the deploy can apply pending
+          # DB migrations on the VPS before the service restart (issue #41).
+          cp -r migration_scripts ./publish/migration_scripts
           sed -i "s/PRODUCTION_MYSQL_PASSWORD/${{ secrets.PRODUCTION_MYSQL_PASSWORD }}/g" ./publish/appsettings.json
           sed -i "s/PRODUCTION_SYMMETRIC_SECURITY_KEY/${{ secrets.PRODUCTION_SYMMETRIC_SECURITY_KEY }}/g" ./publish/appsettings.json
           sed -i "s|PRODUCTION_REDIS_CONNECTION|${{ secrets.PRODUCTION_REDIS_CONNECTION }}|g" ./publish/appsettings.json
@@ -100,6 +103,23 @@ jobs:
           source: "publish/*"
           target: ${{ secrets.DEPLOY_PATH }}
           strip_components: 1
+
+      - name: Apply DB migrations
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key_path: /home/runner/.ssh/id_ed25519
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            # Apply pending migration_scripts/*.sql BEFORE the restart so the new
+            # code never starts against a stale schema (issue #41). The runner is
+            # idempotent (ledger-tracked) and reads DB creds from the deployed
+            # appsettings.json; a non-zero exit fails the deploy before restart.
+            set -e
+            cd ${{ secrets.DEPLOY_PATH }}
+            chmod +x migration_scripts/apply_migrations.sh
+            bash migration_scripts/apply_migrations.sh
 
       - name: Create/Update systemd service file and start the service
         uses: appleboy/ssh-action@master
