@@ -23,8 +23,9 @@ namespace NewWords.Api.Tests.Services
             var weRepo = new Mock<IRepositoryBase<NewWords.Api.Entities.WordExplanation>>().Object;
             var qhRepo = new Mock<IRepositoryBase<NewWords.Api.Entities.QueryHistory>>().Object;
             var uwRepo = new Mock<NewWords.Api.Repositories.IUserWordRepository>().Object;
+            var entitlementMock = new Mock<NewWords.Api.Services.interfaces.IEntitlementService>().Object;
 
-            return new VocabularyService(dbMock, languageServiceMock, configMock, loggerMock, wcRepo, weRepo, qhRepo, uwRepo);
+            return new VocabularyService(dbMock, languageServiceMock, configMock, loggerMock, wcRepo, weRepo, qhRepo, uwRepo, entitlementMock);
         }
 
         [Theory]

@@ -19,6 +19,9 @@ This migration adds `WordCollectionId` to the `UserWords` table and updates the 
 ### 09: Pending Explanation Status Migration
 This migration adds `Status` (`TINYINT NOT NULL DEFAULT 0`; `0 = Ready`, `1 = Pending`) and `RetryCount` (`INT NOT NULL DEFAULT 0`) to the `WordExplanations` table, plus an index on `Status`. When every LLM agent fails at add-word time, the word is persisted immediately with a `Pending` placeholder explanation instead of rolling back; inline re-add retry and the `ExplanationRetryBackgroundService` (every 30 min, batch 20, `RetryCount` cap 20) later fill it and flip it to `Ready`. Idempotent; existing rows read as `Ready`.
 
+### 10: User Entitlements Table Migration
+This migration creates the `UserEntitlements` table backing server-side subscription state (issue #37): `Id` (PK), `UserId` (unique), `PremiumExpiresAt` (`BIGINT NULL`, unix seconds), `Store` (`VARCHAR(32) NULL`), `OriginalTransactionId` (`VARCHAR(255) NULL`), `CreatedAt`/`UpdatedAt` (`BIGINT NOT NULL`). A user is premium iff `PremiumExpiresAt` is non-null and greater than now. The table powers the `GET /Entitlement/Status` endpoint and the non-premium 500-word free cap enforced in `AddUserWordAsync` before any LLM call. Store receipt verification (which populates `Store` / `OriginalTransactionId`) is a separate ticket. Fully idempotent (`CREATE TABLE IF NOT EXISTS` + existence-checked unique index).
+
 ## Migration Steps
 
 ### Phase 1: Analysis
