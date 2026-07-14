@@ -83,6 +83,19 @@ The `Redis` section wires the [ConfigManager.Provider](https://www.nuget.org/pac
 - API keys live in Redis (an internal-only service; operator key visibility is accepted). Auth on the ConfigManager.Web edit path is a deployment concern (internal-only bind / reverse-proxy auth), not app code.
 - No-restart reload of these values pairs with issue #20; the provider's pub/sub reload is in place, but cached config consumers are refreshed there.
 
+#### Rollout checklist (before flipping `PRODUCTION_REDIS_CONNECTION` to a real value)
+
+Once `PRODUCTION_REDIS_CONNECTION` is substituted to a real connection string, Redis is registered last and becomes authoritative for `Agents:*` and `Explanation:PreferredModels:*` (last-registered-wins). If those keys aren't fully populated in ConfigManager.Web at that moment (e.g. `Provider` set but `ApiKey` missing/empty), the Production fail-fast in `Program.cs` (`AgentApiKeyValidator`, issue #6) throws on every restart and the service crash-loops. Follow this order so the switch is verified locally first:
+
+1. **Populate every required key in ConfigManager.Web** for the `newwords.api` prefix before touching the production secret:
+   - `newwords.api:Agents:0:Provider`, `:BaseUrl`, `:ApiKey`, `:Models:0..n`
+   - `newwords.api:Explanation:PreferredModels:0..n`
+2. **Verify locally against the same Redis instance/prefix.** Point `appsettings.Local.json`'s `Redis` section (`ConnectionString`, `Database`, `ProjectPrefix`) at the same instance, run the API, and confirm:
+   - startup logs show no `AgentApiKeyValidator` issues, and
+   - a real explanation request succeeds end-to-end.
+3. **Only then set/change `PRODUCTION_REDIS_CONNECTION`** in the production secret.
+4. **Watch the deploy.** The deploy workflow's post-restart health gate (`.github/workflows/deploy_to_production.yml`) fails the run if the service crash-loops; also watch Seq for a few minutes for late errors.
+
 ### Environment-Specific Settings
 - Development settings in `appsettings.Development.json`
 - Local development settings in `appsettings.Local.json` (git-ignored)
