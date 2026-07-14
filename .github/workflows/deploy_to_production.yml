@@ -130,3 +130,45 @@ jobs:
             sudo systemctl daemon-reload
             sudo systemctl enable ${{ env.SERVICE_NAME }}
             sudo systemctl restart ${{ env.SERVICE_NAME }}
+
+      - name: Verify service health after restart
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key_path: /home/runner/.ssh/id_ed25519
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            # A crash-looping process (e.g. a startup throw under Restart=always /
+            # RestartSec=10) otherwise leaves the deploy green. Manual restarts do NOT
+            # increment NRestarts; only systemd's own auto-restarts under Restart= do,
+            # so a rising NRestarts within the window is a definitive crash-loop signal.
+            # Watch for a window comfortably longer than RestartSec so a single
+            # auto-restart is guaranteed to land inside it. systemctl-based (no HTTP
+            # port / reverse-proxy assumption).
+            SERVICE=${{ env.SERVICE_NAME }}
+            echo "Verifying $SERVICE stays healthy after deploy..."
+            baseline=$(systemctl show -p NRestarts --value "$SERVICE")
+            echo "Baseline NRestarts=$baseline"
+            i=0
+            while [ "$i" -lt 6 ]; do
+              sleep 3
+              i=$((i + 1))
+              state=$(systemctl is-active "$SERVICE" || true)
+              current=$(systemctl show -p NRestarts --value "$SERVICE")
+              echo "  [$((i * 3))s] is-active=$state NRestarts=$current"
+              if [ "$current" != "$baseline" ]; then
+                echo "ERROR: $SERVICE auto-restarted during the monitoring window (crash-loop)."
+                sudo journalctl -u "$SERVICE" -n 100 --no-pager || true
+                sudo systemctl status "$SERVICE" --no-pager || true
+                exit 1
+              fi
+            done
+            final=$(systemctl is-active "$SERVICE" || true)
+            if [ "$final" != "active" ]; then
+              echo "ERROR: $SERVICE is not active after the monitoring window (state=$final)."
+              sudo journalctl -u "$SERVICE" -n 100 --no-pager || true
+              sudo systemctl status "$SERVICE" --no-pager || true
+              exit 1
+            fi
+            echo "OK: $SERVICE stayed active with no auto-restarts for $((i * 3))s."
