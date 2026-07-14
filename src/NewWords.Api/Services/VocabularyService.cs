@@ -10,6 +10,7 @@ using LLM.Services;
 using NewWords.Api.Services.interfaces;
 using System.Globalization;
 using System.Diagnostics;
+using NewWords.Api.Constants;
 using NewWords.Api.Exceptions;
 
 namespace NewWords.Api.Services
@@ -22,7 +23,8 @@ namespace NewWords.Api.Services
         IRepositoryBase<WordCollection> wordCollectionRepository,
         IRepositoryBase<WordExplanation> wordExplanationRepository,
         IRepositoryBase<QueryHistory> queryHistoryRepository,
-        IUserWordRepository userWordRepository)
+        IUserWordRepository userWordRepository,
+        IEntitlementService entitlementService)
         : IVocabularyService
     {
         // Handles WordExplanation entities
@@ -111,6 +113,15 @@ namespace NewWords.Api.Services
                         }
                     }
                 }
+
+                // Free-word-cap gate (issue #37). Enforced here — after the explanation for this
+                // exact language pair is resolved, before any LLM call — so cost protection holds.
+                // Gate on "this add would create a new UserWord for this user", keyed on
+                // WordExplanationId to match how _HandleUserWord dedups. A word the user already
+                // owns (same explanation), a cached re-add, and the #23 pending retry all resolve
+                // to an owned explanation and are exempt; a different language-pair explanation of
+                // an owned headword is a distinct WordExplanationId and is correctly gated.
+                await EnforceFreeWordCapAsync(userId, explanation?.Id ?? pendingRow?.Id);
 
                 ExplanationResult? aiResult = null;
                 if (explanation == null)
@@ -469,6 +480,41 @@ namespace NewWords.Api.Services
                 .ToListAsync();
 
             return words;
+        }
+
+        /// <summary>
+        /// Throws the distinct paywall <see cref="BusinessException"/> when a non-premium user at
+        /// the configured free-word cap tries to add a genuinely new saved word (issue #37).
+        /// <paramref name="targetExplanationId"/> is the explanation this add would link a UserWord
+        /// to (null when none exists yet for this language pair). The add is exempt when the user
+        /// already owns a UserWord for that explanation — re-add, cached re-add, or the #23 retry.
+        /// </summary>
+        private async Task EnforceFreeWordCapAsync(int userId, long? targetExplanationId)
+        {
+            var alreadyOwned = targetExplanationId != null
+                && await userWordRepository.GetFirstOrDefaultAsync(uw =>
+                       uw.UserId == userId && uw.WordExplanationId == targetExplanationId.Value) != null;
+            if (alreadyOwned)
+            {
+                return;
+            }
+
+            if (await entitlementService.IsPremiumAsync(userId))
+            {
+                return;
+            }
+
+            var cap = entitlementService.FreeWordCap;
+            var savedWordCount = await userWordRepository.GetUserWordsCountAsync(userId, null);
+            if (savedWordCount >= cap)
+            {
+                logger.LogInformation(
+                    "Free-word cap reached for user {UserId}: {SavedWordCount}/{Cap}; blocking new word before LLM",
+                    userId, savedWordCount, cap);
+                throw new BusinessException(
+                    $"You've reached the free plan limit of {cap} saved words. Upgrade to premium to add more.",
+                    EntitlementConstants.FreeWordCapReachedErrorCode);
+            }
         }
 
         private async Task<UserWord> _HandleUserWord(int userId, WordExplanation explanationToReturn)

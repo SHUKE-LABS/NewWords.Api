@@ -8,6 +8,8 @@ using Xunit;
 using NewWords.Api.Entities;
 using NewWords.Api.Exceptions;
 using NewWords.Api.Services;
+using NewWords.Api.Services.interfaces;
+using NewWords.Api.Constants;
 using Api.Framework;
 using LLM;
 using LLM.Models;
@@ -29,6 +31,7 @@ namespace NewWords.Api.Tests.Services
         private readonly Mock<ILogger<VocabularyService>> _loggerMock = new();
         private readonly Mock<ISqlSugarClient> _dbMock = new();
         private readonly Mock<ITenant> _tenantMock = new();
+        private readonly Mock<IEntitlementService> _entitlementServiceMock = new();
 
         public VocabularyServiceTests()
         {
@@ -38,6 +41,12 @@ namespace NewWords.Api.Tests.Services
             _tenantMock.Setup(t => t.BeginTranAsync()).Returns(Task.CompletedTask);
             _tenantMock.Setup(t => t.CommitTranAsync()).Returns(Task.CompletedTask);
             _tenantMock.Setup(t => t.RollbackTranAsync()).Returns(Task.CompletedTask);
+
+            // Default entitlement posture: free user, generous cap. Individual cap tests override
+            // these. Without a positive FreeWordCap the default mock returns 0 and the gate would
+            // block every add (0 >= 0), breaking the unrelated add-word tests.
+            _entitlementServiceMock.Setup(e => e.FreeWordCap).Returns(EntitlementConstants.DefaultFreeWordCap);
+            _entitlementServiceMock.Setup(e => e.IsPremiumAsync(It.IsAny<int>())).ReturnsAsync(false);
         }
 
         private VocabularyService CreateService() => new(
@@ -48,7 +57,8 @@ namespace NewWords.Api.Tests.Services
             _wordCollectionRepoMock.Object,
             _wordExplanationRepoMock.Object,
             _queryHistoryRepoMock.Object,
-            _userWordRepoMock.Object
+            _userWordRepoMock.Object,
+            _entitlementServiceMock.Object
         );
 
         // ---- EnsureCanonicalWordAsync (direct calls; formerly reflection) ----
@@ -372,6 +382,182 @@ namespace NewWords.Api.Tests.Services
             _wordExplanationRepoMock.Verify(r => r.InsertReturnIdentityAsync(It.IsAny<WordExplanation>()), Times.Never);
             _languageServiceMock.Verify(l => l.GetMarkdownExplanationWithFallbackAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Once);
+        }
+
+        // ---- Free-word cap gate (issue #37) ----
+
+        [Fact]
+        public async Task AddUserWordAsync_FreeUserAtCap_NewUncachedWord_BlockedBeforeLlm()
+        {
+            // Arrange: brand-new word (no local collection), free user already at the cap.
+            SetupLanguageNames();
+            _wordCollectionRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<Expression<Func<WordCollection, bool>>>(), It.IsAny<string?>()))
+                .ReturnsAsync((WordCollection?)null);
+            _entitlementServiceMock.Setup(e => e.FreeWordCap).Returns(2);
+            _entitlementServiceMock.Setup(e => e.IsPremiumAsync(1)).ReturnsAsync(false);
+            _userWordRepoMock.Setup(r => r.GetUserWordsCountAsync(1, null)).ReturnsAsync(2);
+
+            var service = CreateService();
+
+            // Act
+            var act = () => service.AddUserWordAsync(1, "brandnew", "en", "zh");
+
+            // Assert: blocked with the distinct paywall code, before any LLM call or write.
+            var ex = await act.Should().ThrowAsync<BusinessException>();
+            ex.Which.ErrorCode.Should().Be(EntitlementConstants.FreeWordCapReachedErrorCode);
+            _languageServiceMock.Verify(l => l.GetMarkdownExplanationWithFallbackAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+            _userWordRepoMock.Verify(r => r.InsertAsync(It.IsAny<UserWord>()), Times.Never);
+        }
+
+        [Fact]
+        public async Task AddUserWordAsync_FreeUserAtCap_WordCachedByOthers_BlockedBeforeLlm()
+        {
+            // Arrange: a Ready explanation cached by other users exists, but this free user at the
+            // cap does not own it -> adding it would create a new UserWord -> blocked pre-LLM.
+            SetupLanguageNames();
+            var localWord = new WordCollection { Id = 5, WordText = "apple", DeletedAt = null };
+            var explanation = new WordExplanation
+            {
+                Id = 100, WordCollectionId = 5, WordText = "apple",
+                LearningLanguage = "en", ExplanationLanguage = "zh",
+                MarkdownExplanation = "**apple** cached",
+            };
+            _wordCollectionRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<Expression<Func<WordCollection, bool>>>(), It.IsAny<string?>()))
+                .ReturnsAsync(localWord);
+            _wordExplanationRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<Expression<Func<WordExplanation, bool>>>(), It.IsAny<string?>()))
+                .ReturnsAsync(explanation);
+            _userWordRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<Expression<Func<UserWord, bool>>>(), It.IsAny<string?>()))
+                .ReturnsAsync((UserWord?)null); // user does not own this explanation
+            _entitlementServiceMock.Setup(e => e.FreeWordCap).Returns(500);
+            _entitlementServiceMock.Setup(e => e.IsPremiumAsync(1)).ReturnsAsync(false);
+            _userWordRepoMock.Setup(r => r.GetUserWordsCountAsync(1, null)).ReturnsAsync(500);
+
+            var service = CreateService();
+
+            var act = () => service.AddUserWordAsync(1, "apple", "en", "zh");
+
+            var ex = await act.Should().ThrowAsync<BusinessException>();
+            ex.Which.ErrorCode.Should().Be(EntitlementConstants.FreeWordCapReachedErrorCode);
+            _userWordRepoMock.Verify(r => r.InsertAsync(It.IsAny<UserWord>()), Times.Never);
+        }
+
+        [Fact]
+        public async Task AddUserWordAsync_FreeUserAtCap_DifferentLanguagePairOfOwnedHeadword_Blocked()
+        {
+            // Arrange: user already owns the zh explanation (Id 100) of "apple". They now add the
+            // en-explanation pair, which resolves to a DIFFERENT explanation (Id 200) they don't
+            // own -> a genuinely new UserWord -> gated. Guards the WordExplanationId-granularity key
+            // (a WordCollectionId key would wrongly exempt this).
+            SetupLanguageNames();
+            var localWord = new WordCollection { Id = 5, WordText = "apple", DeletedAt = null };
+            var otherPairExplanation = new WordExplanation
+            {
+                Id = 200, WordCollectionId = 5, WordText = "apple",
+                LearningLanguage = "en", ExplanationLanguage = "en",
+                MarkdownExplanation = "**apple** other pair",
+            };
+            var ownedUserWord = new UserWord { UserId = 1, WordCollectionId = 5, WordExplanationId = 100 };
+            _wordCollectionRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<Expression<Func<WordCollection, bool>>>(), It.IsAny<string?>()))
+                .ReturnsAsync(localWord);
+            _wordExplanationRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<Expression<Func<WordExplanation, bool>>>(), It.IsAny<string?>()))
+                .ReturnsAsync(otherPairExplanation);
+            // Ownership is keyed on WordExplanationId: user owns 100, not the target 200.
+            _userWordRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<Expression<Func<UserWord, bool>>>(), It.IsAny<string?>()))
+                .ReturnsAsync((Expression<Func<UserWord, bool>> expr, string? _) =>
+                    expr.Compile()(ownedUserWord) ? ownedUserWord : null);
+            _entitlementServiceMock.Setup(e => e.FreeWordCap).Returns(500);
+            _entitlementServiceMock.Setup(e => e.IsPremiumAsync(1)).ReturnsAsync(false);
+            _userWordRepoMock.Setup(r => r.GetUserWordsCountAsync(1, null)).ReturnsAsync(500);
+
+            var service = CreateService();
+
+            var act = () => service.AddUserWordAsync(1, "apple", "en", "en");
+
+            var ex = await act.Should().ThrowAsync<BusinessException>();
+            ex.Which.ErrorCode.Should().Be(EntitlementConstants.FreeWordCapReachedErrorCode);
+            _userWordRepoMock.Verify(r => r.InsertAsync(It.IsAny<UserWord>()), Times.Never);
+        }
+
+        [Fact]
+        public async Task AddUserWordAsync_FreeUserAtCap_ReAddingOwnedWord_NotBlocked()
+        {
+            // Arrange: user already owns the Ready explanation (Id 100). Even at the cap, re-adding
+            // an owned word is exempt (no new UserWord) and must proceed.
+            SetupLanguageNames();
+            var localWord = new WordCollection { Id = 5, WordText = "apple", DeletedAt = null };
+            var explanation = new WordExplanation
+            {
+                Id = 100, WordCollectionId = 5, WordText = "apple",
+                LearningLanguage = "en", ExplanationLanguage = "zh",
+                MarkdownExplanation = "**apple** cached",
+            };
+            var ownedUserWord = new UserWord { UserId = 1, WordCollectionId = 5, WordExplanationId = 100 };
+            _wordCollectionRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<Expression<Func<WordCollection, bool>>>(), It.IsAny<string?>()))
+                .ReturnsAsync(localWord);
+            _wordExplanationRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<Expression<Func<WordExplanation, bool>>>(), It.IsAny<string?>()))
+                .ReturnsAsync(explanation);
+            _userWordRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<Expression<Func<UserWord, bool>>>(), It.IsAny<string?>()))
+                .ReturnsAsync(ownedUserWord); // user owns it
+            _userWordRepoMock.Setup(r => r.UpdateAsync(It.IsAny<UserWord>())).ReturnsAsync(true);
+            _entitlementServiceMock.Setup(e => e.FreeWordCap).Returns(1);
+            _entitlementServiceMock.Setup(e => e.IsPremiumAsync(1)).ReturnsAsync(false);
+            _userWordRepoMock.Setup(r => r.GetUserWordsCountAsync(1, null)).ReturnsAsync(999);
+
+            var service = CreateService();
+
+            // Act: no throw; existing user word bumped.
+            var result = await service.AddUserWordAsync(1, "apple", "en", "zh");
+
+            // Assert
+            result.Id.Should().Be(100);
+            _userWordRepoMock.Verify(r => r.UpdateAsync(It.IsAny<UserWord>()), Times.Once);
+            _userWordRepoMock.Verify(r => r.InsertAsync(It.IsAny<UserWord>()), Times.Never);
+        }
+
+        [Fact]
+        public async Task AddUserWordAsync_PremiumUserOverCap_NewWord_NotBlocked()
+        {
+            // Arrange: premium user well over the cap adds a brand-new word -> no cap applies.
+            SetupLanguageNames();
+            _wordCollectionRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<Expression<Func<WordCollection, bool>>>(), It.IsAny<string?>()))
+                .ReturnsAsync((WordCollection?)null);
+            _wordCollectionRepoMock.Setup(r => r.InsertReturnIdentityAsync(It.IsAny<WordCollection>()))
+                .ReturnsAsync(5L);
+            _wordExplanationRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<Expression<Func<WordExplanation, bool>>>(), It.IsAny<string?>()))
+                .ReturnsAsync((WordExplanation?)null);
+            _wordExplanationRepoMock.Setup(r => r.InsertReturnIdentityAsync(It.IsAny<WordExplanation>()))
+                .ReturnsAsync(100L);
+            _languageServiceMock.Setup(l => l.GetMarkdownExplanationWithFallbackAsync("apple", "Chinese", "English"))
+                .ReturnsAsync(new ExplanationResult { IsSuccess = true, Markdown = "**apple**\nA fruit.", ModelName = "prov:model" });
+            _userWordRepoMock.Setup(r => r.GetFirstOrDefaultAsync(
+                    It.IsAny<Expression<Func<UserWord, bool>>>(), It.IsAny<string?>()))
+                .ReturnsAsync((UserWord?)null);
+            _userWordRepoMock.Setup(r => r.InsertAsync(It.IsAny<UserWord>())).ReturnsAsync(true);
+            _entitlementServiceMock.Setup(e => e.FreeWordCap).Returns(1);
+            _entitlementServiceMock.Setup(e => e.IsPremiumAsync(1)).ReturnsAsync(true);
+            _userWordRepoMock.Setup(r => r.GetUserWordsCountAsync(1, null)).ReturnsAsync(999);
+
+            var service = CreateService();
+
+            // Act
+            var result = await service.AddUserWordAsync(1, "apple", "en", "zh");
+
+            // Assert
+            result.Id.Should().Be(100);
+            _userWordRepoMock.Verify(r => r.InsertAsync(It.IsAny<UserWord>()), Times.Once);
         }
 
         // ---- RetryPendingExplanationsAsync (background worker entry point) ----
