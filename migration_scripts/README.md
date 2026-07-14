@@ -2,6 +2,57 @@
 
 This directory contains all database migration scripts for the NewWords.Api project.
 
+## How migrations are applied (issue #41)
+
+Production deploys apply pending migrations **automatically**. `apply_migrations.sh`
+runs on the VPS during deploy — after the files are copied, before the service
+restarts — via the *Apply DB migrations* step in
+`.github/workflows/deploy_to_production.yml`. If it fails, the deploy fails
+**before** the restart, so the new code never starts against a stale schema.
+
+The runner is ledger-based and idempotent:
+
+- A `schema_migrations` table records every applied filename.
+- Only `NN_*.sql` files (numeric prefix) are considered, applied in numeric order.
+- Each script runs **once**; re-deploys skip already-applied scripts, and each
+  script is itself `INFORMATION_SCHEMA`-guarded / `CREATE TABLE IF NOT EXISTS`.
+- DB credentials are read from the deployed `appsettings.json`
+  `DatabaseConnectionOptions.ConnectionString` (override with
+  `MYSQL_HOST/PORT/USER/DB/PASSWORD`); the password is passed via a `0600`
+  `--defaults-file`, never on a process command line.
+- `mysql` client is required on the VPS (the old manual `source` step already
+  assumed it); the step fails loudly if it is absent.
+
+Add a new migration by dropping a `NN_<name>.sql` file here (idempotent SQL, next
+number in sequence). The next deploy applies and records it. Preview locally with:
+
+```bash
+DRY_RUN=1 APPSETTINGS=/path/to/appsettings.json bash migration_scripts/apply_migrations.sh
+```
+
+### ⚠️ One-time precondition before the FIRST automated deploy
+
+The **first** run creates the `schema_migrations` ledger and **seeds every script
+present as a baseline — recording them as applied WITHOUT executing them**, because
+an existing production DB already contains 01-08 (pre-existing) and 09/10 (applied
+by the manual incident mitigation below).
+
+**Therefore any outstanding migration MUST be applied to the production DB by hand
+before the first automated deploy lands.** If it is not, the baseline silently
+records it as applied and the schema/code drift is baked in — the exact bug this
+automation exists to prevent. For the #41 incident that means running, once, first:
+
+```sql
+source migration_scripts/09_word_explanations_pending_status.sql
+source migration_scripts/10_user_entitlements.sql
+```
+
+(Both are idempotent; re-running is safe.) A fresh, empty database has no baseline
+to preserve, so run all scripts manually once before the first deploy there too.
+
+The manual `source NN.sql` steps documented per-migration below remain valid as an
+**emergency / first-time bootstrap** path, but are no longer the normal route.
+
 ## Migration History
 
 ### 01-03: WordCollection Language Field Removal Migration
