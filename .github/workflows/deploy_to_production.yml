@@ -33,7 +33,12 @@ jobs:
 
   build-and-deploy:
     needs: test
-    if: github.event_name != 'pull_request'
+    # Production deploy is gated behind a deliberate manual dispatch (issue #46):
+    # a push/merge to master runs the `test` job only, so merging code no longer
+    # restarts prod or applies DB migrations. Ship prod by running this workflow
+    # from the Actions tab (Run workflow), which triggers the full pipeline below
+    # — migrations + restart + post-restart crash-loop health check.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
     steps:
