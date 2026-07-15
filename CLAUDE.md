@@ -49,6 +49,9 @@ dotnet run --project src/NewWords.Api --launch-profile https
 - Database migrations are ordered, idempotent SQL scripts in `migration_scripts/` (`NN_<name>.sql`)
 - **Applied automatically on deploy** (issue #41): `migration_scripts/apply_migrations.sh` runs on the VPS during `deploy_to_production.yml`, after files are copied and before the service restarts, tracked by a `schema_migrations` ledger so each script runs exactly once. A migration failure fails the deploy before restart. Add a migration by dropping the next-numbered idempotent `NN_*.sql`; see `migration_scripts/README.md` (including the one-time baseline precondition for the first automated deploy).
 
+### Deploying to production (issue #46)
+Production deploy is **manually gated**, not push-triggered. A merge to `master` runs the `test` job in `.github/workflows/deploy_to_production.yml` (build + tests) but does **not** touch prod. To ship, run that workflow by hand: GitHub → **Actions** → *Deploy NewWords.Api to production* → **Run workflow** (`workflow_dispatch`). Only that manual run executes `build-and-deploy`, which applies pending DB migrations, restarts the systemd service, and runs the post-restart crash-loop health check. This decouples "code merged" from "users disrupted" so releases land at a deliberate time.
+
 ### Development URLs
 - HTTP: http://localhost:5116
 - HTTPS: https://localhost:7162
