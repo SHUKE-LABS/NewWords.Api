@@ -25,8 +25,8 @@ public class ConfigurationServiceRedisBindingTests
                 ["Agents:0:Provider"] = "openrouter",
                 ["Agents:0:BaseUrl"] = "https://openrouter.ai/api/v1",
                 ["Agents:0:ApiKey"] = "redis-key",
-                ["Agents:0:Models:0"] = "google/gemma-4-26b-a4b-it",
-                ["Agents:0:Models:1"] = "anthropic/claude-3.5-haiku",
+                ["Agents:0:Models:0"] = "openai/gpt-5.6-luna",
+                ["Agents:0:Models:1"] = "google/gemma-4-26b-a4b-it",
             })
             .Build();
 
@@ -35,8 +35,8 @@ public class ConfigurationServiceRedisBindingTests
         service.Agents.Select(a => $"{a.Provider}:{a.ModelName}:{a.BaseUrl}:{a.ApiKey}")
             .Should()
             .Equal(
-                "openrouter:google/gemma-4-26b-a4b-it:https://openrouter.ai/api/v1:redis-key",
-                "openrouter:anthropic/claude-3.5-haiku:https://openrouter.ai/api/v1:redis-key");
+                "openrouter:openai/gpt-5.6-luna:https://openrouter.ai/api/v1:redis-key",
+                "openrouter:google/gemma-4-26b-a4b-it:https://openrouter.ai/api/v1:redis-key");
     }
 
     [Fact]
@@ -45,8 +45,8 @@ public class ConfigurationServiceRedisBindingTests
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["Explanation:PreferredModels:0"] = "google/gemma-4-26b-a4b-it",
-                ["Explanation:PreferredModels:1"] = "anthropic/claude-3.5-haiku",
+                ["Explanation:PreferredModels:0"] = "openai/gpt-5.6-luna",
+                ["Explanation:PreferredModels:1"] = "google/gemma-4-26b-a4b-it",
             })
             .Build();
 
@@ -54,7 +54,7 @@ public class ConfigurationServiceRedisBindingTests
 
         service.PreferredExplanationModels
             .Should()
-            .Equal("google/gemma-4-26b-a4b-it", "anthropic/claude-3.5-haiku");
+            .Equal("openai/gpt-5.6-luna", "google/gemma-4-26b-a4b-it");
     }
 
     [Fact]
@@ -69,26 +69,26 @@ public class ConfigurationServiceRedisBindingTests
                 ["Agents:0:Provider"] = "openrouter",
                 ["Agents:0:BaseUrl"] = "https://openrouter.ai/api/v1",
                 ["Agents:0:ApiKey"] = "old-key",
-                ["Agents:0:Models:0"] = "google/gemma-4-26b-a4b-it",
-                ["Explanation:PreferredModels:0"] = "google/gemma-4-26b-a4b-it",
+                ["Agents:0:Models:0"] = "openai/gpt-5.6-luna",
+                ["Explanation:PreferredModels:0"] = "openai/gpt-5.6-luna",
             })
             .Build();
 
         var service = new ConfigurationService(configuration);
 
         service.Agents.Single().ApiKey.Should().Be("old-key");
-        service.PreferredExplanationModels.Should().Equal("google/gemma-4-26b-a4b-it");
+        service.PreferredExplanationModels.Should().Equal("openai/gpt-5.6-luna");
 
         // Mutate the live configuration after construction.
         configuration["Agents:0:ApiKey"] = "new-key";
-        configuration["Agents:0:Models:1"] = "anthropic/claude-3.5-haiku";
-        configuration["Explanation:PreferredModels:0"] = "anthropic/claude-3.5-haiku";
+        configuration["Agents:0:Models:1"] = "google/gemma-4-26b-a4b-it";
+        configuration["Explanation:PreferredModels:0"] = "google/gemma-4-26b-a4b-it";
 
         service.Agents.Select(a => $"{a.ModelName}:{a.ApiKey}")
             .Should()
             .Equal(
-                "google/gemma-4-26b-a4b-it:new-key",
-                "anthropic/claude-3.5-haiku:new-key");
-        service.PreferredExplanationModels.Should().Equal("anthropic/claude-3.5-haiku");
+                "openai/gpt-5.6-luna:new-key",
+                "google/gemma-4-26b-a4b-it:new-key");
+        service.PreferredExplanationModels.Should().Equal("google/gemma-4-26b-a4b-it");
     }
 }
