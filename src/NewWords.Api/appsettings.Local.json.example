@@ -18,15 +18,15 @@
       "BaseUrl":"https://openrouter.ai/api/v1",
       "ApiKey":"your-openrouter-api-key",
       "Models":[
-        "google/gemma-4-26b-a4b-it",
-        "anthropic/claude-3.5-haiku"
+        "openai/gpt-5.6-luna",
+        "google/gemma-4-26b-a4b-it"
       ]
     }
   ],
   "Explanation": {
     "PreferredModels": [
-      "google/gemma-4-26b-a4b-it",
-      "anthropic/claude-3.5-haiku"
+      "openai/gpt-5.6-luna",
+      "google/gemma-4-26b-a4b-it"
     ]
   },
   "GooglePlay": {

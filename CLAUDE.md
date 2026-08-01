@@ -83,8 +83,11 @@ The `Redis` section wires the [ConfigManager.Provider](https://www.nuget.org/pac
   - `newwords.api:Agents:0:Provider` → `openrouter`
   - `newwords.api:Agents:0:BaseUrl` → `https://openrouter.ai/api/v1`
   - `newwords.api:Agents:0:ApiKey` → `<key>`
-  - `newwords.api:Agents:0:Models:0` → `google/gemma-4-26b-a4b-it`
-  - `newwords.api:Explanation:PreferredModels:0` → `google/gemma-4-26b-a4b-it`
+  - `newwords.api:Agents:0:Models:0` → `openai/gpt-5.6-luna`
+  - `newwords.api:Agents:0:Models:1` → `google/gemma-4-26b-a4b-it`
+  - `newwords.api:Explanation:PreferredModels:0` → `openai/gpt-5.6-luna`
+  - `newwords.api:Explanation:PreferredModels:1` → `google/gemma-4-26b-a4b-it`
+  - The active rollout uses exactly indexes `:0..1`. When updating an existing Redis configuration, remove stale `newwords.api:Agents:0:Models:2` and `newwords.api:Explanation:PreferredModels:2` keys (and any higher indexes).
 - API keys live in Redis (an internal-only service; operator key visibility is accepted). Auth on the ConfigManager.Web edit path is a deployment concern (internal-only bind / reverse-proxy auth), not app code.
 - No-restart reload of these values pairs with issue #20; the provider's pub/sub reload is in place, but cached config consumers are refreshed there.
 
@@ -93,8 +96,9 @@ The `Redis` section wires the [ConfigManager.Provider](https://www.nuget.org/pac
 Once `PRODUCTION_REDIS_CONNECTION` is substituted to a real connection string, Redis is registered last and becomes authoritative for `Agents:*` and `Explanation:PreferredModels:*` (last-registered-wins). If those keys aren't fully populated in ConfigManager.Web at that moment (e.g. `Provider` set but `ApiKey` missing/empty), the Production fail-fast in `Program.cs` (`AgentApiKeyValidator`, issue #6) throws on every restart and the service crash-loops. Follow this order so the switch is verified locally first:
 
 1. **Populate every required key in ConfigManager.Web** for the `newwords.api` prefix before touching the production secret:
-   - `newwords.api:Agents:0:Provider`, `:BaseUrl`, `:ApiKey`, `:Models:0..n`
-   - `newwords.api:Explanation:PreferredModels:0..n`
+   - `newwords.api:Agents:0:Provider`, `:BaseUrl`, `:ApiKey`, `:Models:0..1` (`:0` Luna first, `:1` Gemma 4 fallback)
+   - `newwords.api:Explanation:PreferredModels:0..1` (`:0` Luna first, `:1` Gemma 4 fallback)
+   - When replacing an existing model list, remove stale `:2` (and higher) keys from both paths.
 2. **Verify locally against the same Redis instance/prefix.** Point `appsettings.Local.json`'s `Redis` section (`ConnectionString`, `Database`, `ProjectPrefix`) at the same instance, run the API, and confirm:
    - startup logs show no `AgentApiKeyValidator` issues, and
    - a real explanation request succeeds end-to-end.

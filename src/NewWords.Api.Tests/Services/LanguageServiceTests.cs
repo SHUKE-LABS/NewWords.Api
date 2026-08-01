@@ -12,15 +12,15 @@ public class LanguageServiceTests
     {
         var agents = new[]
         {
-            new Agent { Provider = "OpenRouter", ModelName = "anthropic/claude-3.5-haiku" },
+            new Agent { Provider = "OpenRouter", ModelName = "openai/gpt-5.6-luna" },
             new Agent { Provider = "OpenAI", ModelName = "gpt-4.1-mini" },
             new Agent { Provider = "OpenRouter", ModelName = "google/gemma-4-26b-a4b-it" },
             new Agent { Provider = "OpenRouter", ModelName = "mistralai/devstral-2512:free" }
         };
         var preferredModels = new[]
         {
-            "google/gemma-4-26b-a4b-it",
-            "anthropic/claude-3.5-haiku"
+            "openai/gpt-5.6-luna",
+            "google/gemma-4-26b-a4b-it"
         };
 
         var result = LanguageService.SelectExplanationAgents(agents, preferredModels);
@@ -28,8 +28,8 @@ public class LanguageServiceTests
         result.Select(agent => $"{agent.Provider}:{agent.ModelName}")
             .Should()
             .Equal(
+                "OpenRouter:openai/gpt-5.6-luna",
                 "OpenRouter:google/gemma-4-26b-a4b-it",
-                "OpenRouter:anthropic/claude-3.5-haiku",
                 "OpenAI:gpt-4.1-mini",
                 "OpenRouter:mistralai/devstral-2512:free");
     }
@@ -44,8 +44,8 @@ public class LanguageServiceTests
         };
         var preferredModels = new[]
         {
-            "google/gemma-4-26b-a4b-it",
-            "anthropic/claude-3.5-haiku"
+            "openai/gpt-5.6-luna",
+            "google/gemma-4-26b-a4b-it"
         };
 
         var result = LanguageService.SelectExplanationAgents(agents, preferredModels);

@@ -66,7 +66,7 @@ public class AgentApiKeyValidatorTests
             Provider = "openrouter",
             BaseUrl = "https://openrouter.ai/api/v1",
             ApiKey = "XAI_API_KEY",
-            Models = ["google/gemma-4-26b-a4b-it", "anthropic/claude-3.5-haiku"]
+            Models = ["openai/gpt-5.6-luna", "google/gemma-4-26b-a4b-it"]
         };
 
         var issues = AgentApiKeyValidator.FindPlaceholderApiKeyIssues([bad, Agent("openai", "sk-real-key-lower")]);
