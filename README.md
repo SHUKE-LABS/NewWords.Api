@@ -36,8 +36,13 @@ non-null and still in the future; otherwise they are **free**.
   (`EntitlementConstants.FreeWordCapReachedErrorCode`) so the client can show a paywall rather
   than a generic failure. Re-adding a word you already own (and the pending "Generate now"
   retry) is never blocked. Premium users have no cap.
-- **Grandfathering:** users already above the cap keep all existing words; only new adds are
-  blocked until they upgrade or drop back under the cap. Nothing is ever deleted.
+- **Legacy accounts:** the cap applies uniformly to every non-premium account, including
+  accounts created before issue #37. Existing words are retained, but a non-premium account at
+  the cap is blocked from genuinely new adds with `42901`. There is no legacy backfill or
+  separate cap-exemption state. User 1's existing over-cap account is covered by an explicit,
+  durable/long-term manual premium grant as an operational exception, not by grandfathering.
+- **Policy revisit:** reopen the grandfathering question if a future bulk import reintroduces
+  pre-cap accounts.
 - **Status endpoint:** `GET /Entitlement/Status` (authenticated) returns
   `{ plan, premiumExpiresAt, savedWordCount, wordCap }` so the client can render the plan and an
   `X/cap` indicator.

@@ -7,6 +7,9 @@ namespace NewWords.Api.Entities
     /// status: a user is premium iff <see cref="PremiumExpiresAt"/> is set and still in the
     /// future. Client-reported purchase state is never trusted. This ticket (#37) creates the
     /// store, the read path, and the upsert seam; store receipt verification is a separate ticket.
+    /// The free-word cap applies uniformly to non-premium accounts, including accounts created
+    /// before #37. User 1's manual premium grant is the explicit durable/long-term operational
+    /// exception; revisit the policy if a future bulk import reintroduces pre-cap accounts.
     /// </summary>
     [SugarTable("UserEntitlements")]
     // One entitlement row per user.
