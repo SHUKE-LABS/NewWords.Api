@@ -116,6 +116,15 @@ Clients submit a StoreKit 2 transaction id to `POST /Entitlement/VerifyApple`; t
 - **Sandbox coverage**: the grant/reject logic and the Production→Sandbox fallback are unit-tested via a mocked verifier seam; a real end-to-end sandbox verification requires live Apple credentials and is a manual step (not run in CI).
 - **Follow-ups (out of scope here)**: Google Play verification (#24; entitlement store is already store-agnostic) and App Store Server Notifications V2 webhook (for server-side renewal/refund tracking).
 
+### Free-word cap policy for legacy accounts (issue #47)
+The 500-word free cap applies uniformly to every non-premium account, including accounts created
+before issue #37. Existing words remain in place, but genuinely new adds by a non-premium account
+at the cap return `42901`. The policy has no legacy backfill and no separate cap-exemption state.
+
+User 1's existing over-cap account is the explicit operational exception: its manual premium grant
+must remain durable/long-term in the existing server-side entitlement model. Reopen the
+grandfathering question if a future bulk import reintroduces pre-cap accounts.
+
 ### Environment-Specific Settings
 - Development settings in `appsettings.Development.json`
 - Local development settings in `appsettings.Local.json` (git-ignored)
