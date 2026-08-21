@@ -80,10 +80,22 @@ This migration creates the `UserEntitlements` table backing server-side subscrip
 
 ### 11: Drop Pending Explanation Status Migration
 This migration reverts `09`: an add now returns a real explanation or fails (issue #52), so no row
-can ever be `Pending` again. It deletes every surviving `Status = 1` row **and the `UserWords` rows
-pointing at it**, then drops `IX_WordExplanations_Status`, `RetryCount`, and `Status` — in that
-order, so no placeholder markdown survives to later read as `Ready`. Fully idempotent: once `Status`
-is gone every step is a no-op.
+can ever be `Pending` again. It drops `IX_WordExplanations_Status`, `RetryCount`, and `Status`
+**first**, and only then deletes any surviving placeholder row and the `UserWords` rows pointing at
+it. Fully idempotent: once the columns are gone the drops are no-ops and the deletes match nothing.
+
+**Why the schema drop comes first.** Migrations are applied while the *outgoing* service is still
+serving requests; it is restarted afterwards. Deleting pending rows first would leave a window in
+which the old build commits a fresh `Status = 1` placeholder after the delete but before the column
+drop — and the new build would read that row as a real explanation. Dropping `Status`/`RetryCount`
+first is the write barrier: every `WordExplanations` INSERT/UPDATE the outgoing build issues names
+those columns (SqlSugar maps the whole entity), so from that point its writes fail and roll back and
+no new placeholder can be created. Its `WordExplanations` *reads* also fail for the few seconds
+until the restart — strictly less disruption than stopping the service for the whole migration.
+Behind that barrier, placeholders are identified by content instead of `Status`:
+`ProviderModelName IS NULL` **and** markdown containing `The explanation is being generated and will
+appear shortly.` (the single shape `BuildPendingPlaceholder` ever wrote). Both conditions must hold,
+so a genuine explanation that happens to have no provider model recorded is never touched.
 
 **Pre-deploy operator step (the final best-effort fill pass).** Deploys apply migrations *before*
 the service restart, so no code shipped with this migration can fill pending rows ahead of the
@@ -95,9 +107,9 @@ SELECT COUNT(*) FROM WordExplanations WHERE Status = 1;   -- anything to save?
 UPDATE WordExplanations SET RetryCount = 0 WHERE Status = 1;  -- re-arm rows parked at the cap
 ```
 
-then wait at least one worker cycle (30 min) and re-check the count. Whatever is still `Status = 1`
-when the deploy runs is deleted by this migration — those users must re-add the word, which now
-either returns a real explanation or fails.
+then wait at least one worker cycle (30 min) and re-check the count. Whatever is still pending when
+the deploy runs is deleted by this migration — those users must re-add the word, which now either
+returns a real explanation or fails.
 
 ## Migration Steps
 

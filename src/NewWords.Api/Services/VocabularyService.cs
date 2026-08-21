@@ -450,7 +450,7 @@ namespace NewWords.Api.Services
         /// the configured free-word cap tries to add a genuinely new saved word (issue #37).
         /// <paramref name="targetExplanationId"/> is the explanation this add would link a UserWord
         /// to (null when none exists yet for this language pair). The add is exempt when the user
-        /// already owns a UserWord for that explanation — re-add, cached re-add, or the #23 retry.
+        /// already owns a UserWord for that explanation — a re-add or a cached re-add.
         /// </summary>
         private async Task EnforceFreeWordCapAsync(int userId, long? targetExplanationId)
         {
