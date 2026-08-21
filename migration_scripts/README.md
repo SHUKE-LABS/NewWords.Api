@@ -80,22 +80,27 @@ This migration creates the `UserEntitlements` table backing server-side subscrip
 
 ### 11: Drop Pending Explanation Status Migration
 This migration reverts `09`: an add now returns a real explanation or fails (issue #52), so no row
-can ever be `Pending` again. It drops `IX_WordExplanations_Status`, `RetryCount`, and `Status`
-**first**, and only then deletes any surviving placeholder row and the `UserWords` rows pointing at
-it. Fully idempotent: once the columns are gone the drops are no-ops and the deletes match nothing.
+can ever be `Pending` again. It deletes every remaining `Status = 1` row **and the `UserWords` rows
+pointing at it**, then drops `IX_WordExplanations_Status`, `RetryCount`, and `Status` — in that
+order, so no placeholder row survives to later read as a real explanation. Fully idempotent: once
+the columns are gone, every step is a no-op.
 
-**Why the schema drop comes first.** Migrations are applied while the *outgoing* service is still
-serving requests; it is restarted afterwards. Deleting pending rows first would leave a window in
-which the old build commits a fresh `Status = 1` placeholder after the delete but before the column
-drop — and the new build would read that row as a real explanation. Dropping `Status`/`RetryCount`
-first is the write barrier: every `WordExplanations` INSERT/UPDATE the outgoing build issues names
-those columns (SqlSugar maps the whole entity), so from that point its writes fail and roll back and
-no new placeholder can be created. Its `WordExplanations` *reads* also fail for the few seconds
-until the restart — strictly less disruption than stopping the service for the whole migration.
-Behind that barrier, placeholders are identified by content instead of `Status`:
-`ProviderModelName IS NULL` **and** markdown containing `The explanation is being generated and will
-appear shortly.` (the single shape `BuildPendingPlaceholder` ever wrote). Both conditions must hold,
-so a genuine explanation that happens to have no provider model recorded is never touched.
+**The whole sequence runs under an explicit write lock.** Migrations are applied while the
+*outgoing* service is still serving requests; it is restarted afterwards. Without a barrier the old
+build could commit a fresh `Status = 1` placeholder in the window between the delete and the column
+drop, and the new build would read that row as a real explanation. So the script holds
+`LOCK TABLES WordExplanations WRITE, UserWords WRITE` (plus the aliases the join needs — locked-tables
+mode requires each alias to be locked by name) across both the deletes and the DDL in one session: a
+concurrent add blocks until the lock is released and then fails against the new schema, because its
+INSERT names `Status`/`RetryCount` (SqlSugar maps the whole entity). Nothing is persisted and no
+placeholder can slip in. Consequences worth knowing:
+
+- The DB user needs `LOCK TABLES` in addition to `DELETE` and `ALTER`; without it the script fails
+  and the deploy stops before the restart (safe, but it blocks the deploy).
+- All `INFORMATION_SCHEMA` probes are evaluated *before* the lock, since locked-tables mode
+  restricts the session to the locked tables.
+- Adds queue for the duration of the migration and the outgoing build's writes then fail for the
+  few seconds until the restart — deliberately, in exchange for the guarantee.
 
 **Pre-deploy operator step (the final best-effort fill pass).** Deploys apply migrations *before*
 the service restart, so no code shipped with this migration can fill pending rows ahead of the
