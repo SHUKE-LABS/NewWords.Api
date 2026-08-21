@@ -83,7 +83,6 @@ namespace NewWords.Api.Services
                 localWordLookupMs = Math.Round(localWordLookupStopwatch.Elapsed.TotalMilliseconds, 1);
 
                 WordExplanation? explanation = null;
-                WordExplanation? pendingRow = null;
                 long wordCollectionId = 0;
                 string canonicalWord = wordTextTrimmed;
 
@@ -99,18 +98,8 @@ namespace NewWords.Api.Services
 
                     if (explanation != null)
                     {
-                        if (explanation.Status == ExplanationStatus.Pending)
-                        {
-                            // A placeholder left by an earlier all-agents-failed add. Treat it as missing so
-                            // control enters the AI path for one inline retry that fills this same row.
-                            pendingRow = explanation;
-                            explanation = null;
-                        }
-                        else
-                        {
-                            wordCollectionId = localWord.Id;
-                            usedLocalExplanation = true;
-                        }
+                        wordCollectionId = localWord.Id;
+                        usedLocalExplanation = true;
                     }
                 }
 
@@ -118,10 +107,10 @@ namespace NewWords.Api.Services
                 // exact language pair is resolved, before any LLM call — so cost protection holds.
                 // Gate on "this add would create a new UserWord for this user", keyed on
                 // WordExplanationId to match how _HandleUserWord dedups. A word the user already
-                // owns (same explanation), a cached re-add, and the #23 pending retry all resolve
-                // to an owned explanation and are exempt; a different language-pair explanation of
-                // an owned headword is a distinct WordExplanationId and is correctly gated.
-                await EnforceFreeWordCapAsync(userId, explanation?.Id ?? pendingRow?.Id);
+                // owns (same explanation) and a cached re-add both resolve to an owned explanation
+                // and are exempt; a different language-pair explanation of an owned headword is a
+                // distinct WordExplanationId and is correctly gated.
+                await EnforceFreeWordCapAsync(userId, explanation?.Id);
 
                 ExplanationResult? aiResult = null;
                 if (explanation == null)
@@ -143,71 +132,45 @@ namespace NewWords.Api.Services
                     {
                         llmStopwatch.Stop();
                         llmTotalMs = Math.Round(llmStopwatch.Elapsed.TotalMilliseconds, 1);
-                        logger.LogWarning(ex, "AI call failed after {ElapsedMs}ms for word '{WordText}'; will fallback to user input as canonical word",
+                        logger.LogWarning(ex, "AI call threw after {ElapsedMs}ms for word '{WordText}'; the add will fail",
                             llmStopwatch.ElapsedMilliseconds, wordTextTrimmed);
                         aiResult = new ExplanationResult { IsSuccess = false, ErrorMessage = ex.Message };
                     }
 
                     var aiSuccess = aiResult != null && aiResult.IsSuccess && !string.IsNullOrWhiteSpace(aiResult.Markdown);
-
-                    if (pendingRow != null)
+                    if (!aiSuccess)
                     {
-                        // Inline retry of an existing pending explanation: one LLM attempt. On success fill
-                        // that same row in place (canonical extraction + typo merge); on failure return it
-                        // unchanged so the word still shows up while the background worker keeps retrying.
-                        var fillStopwatch = Stopwatch.StartNew();
-                        if (aiSuccess)
-                        {
-                            await FillPendingExplanationAsync(pendingRow, aiResult!);
-                        }
-                        else
-                        {
-                            logger.LogWarning("Inline retry for pending word '{WordText}' failed; returning pending row unchanged",
-                                wordTextTrimmed);
-                        }
-                        fillStopwatch.Stop();
-                        transactionMs = Math.Round(fillStopwatch.Elapsed.TotalMilliseconds, 1);
-
-                        explanation = pendingRow;
-                        wordCollectionId = pendingRow.WordCollectionId;
+                        // An add either returns a real explanation or fails (issue #52). Throw before the
+                        // transaction opens so nothing at all is persisted -- no placeholder explanation,
+                        // no word collection entry, no user word.
+                        logger.LogWarning("AI explanation unavailable for '{WordText}': {ErrorMessage}. Failing the add",
+                            wordTextTrimmed, aiResult?.ErrorMessage ?? "empty response");
+                        throw new BusinessException("Could not generate an explanation for this word right now. Please try again.");
                     }
-                    else
-                    {
-                        if (!aiSuccess)
-                        {
-                            // Do not throw: persist the user's word now as a pending explanation instead of
-                            // rolling back the whole transaction. The word is the valuable signal.
-                            logger.LogWarning("AI explanation unavailable for '{WordText}': {ErrorMessage}. Persisting as pending",
-                                wordTextTrimmed, aiResult?.ErrorMessage ?? "empty response");
-                            canonicalWord = wordTextTrimmed;
-                        }
-                        else
-                        {
-                            var canonicalExtractStopwatch = Stopwatch.StartNew();
-                            canonicalWord = ExtractCanonicalWordFromMarkdown(aiResult!.Markdown!);
-                            if (string.IsNullOrWhiteSpace(canonicalWord)) canonicalWord = wordTextTrimmed;
-                            canonicalExtractStopwatch.Stop();
-                            canonicalExtractMs = Math.Round(canonicalExtractStopwatch.Elapsed.TotalMilliseconds, 1);
-                        }
 
-                        var transactionStopwatch = Stopwatch.StartNew();
-                        try
+                    var canonicalExtractStopwatch = Stopwatch.StartNew();
+                    canonicalWord = ExtractCanonicalWordFromMarkdown(aiResult!.Markdown!);
+                    if (string.IsNullOrWhiteSpace(canonicalWord)) canonicalWord = wordTextTrimmed;
+                    canonicalExtractStopwatch.Stop();
+                    canonicalExtractMs = Math.Round(canonicalExtractStopwatch.Elapsed.TotalMilliseconds, 1);
+
+                    var transactionStopwatch = Stopwatch.StartNew();
+                    try
+                    {
+                        await TransactionHelper.ExecuteInTransactionAsync(db, async () =>
                         {
-                            await TransactionHelper.ExecuteInTransactionAsync(db, async () =>
-                            {
-                                wordCollectionId = await _HandleWordCollection(wordTextTrimmed, canonicalWord);
-                                explanation = await _HandleExplanation(canonicalWord, learningLanguageCode, explanationLanguageCode, wordCollectionId, aiResult);
-                            }, logger);
-                            transactionStopwatch.Stop();
-                            transactionMs = Math.Round(transactionStopwatch.Elapsed.TotalMilliseconds, 1);
-                        }
-                        catch (Exception ex)
-                        {
-                            transactionStopwatch.Stop();
-                            transactionMs = Math.Round(transactionStopwatch.Elapsed.TotalMilliseconds, 1);
-                            logger.LogError(ex, "Database transaction block failed for word '{WordText}'", wordTextTrimmed);
-                            throw;
-                        }
+                            wordCollectionId = await _HandleWordCollection(wordTextTrimmed, canonicalWord);
+                            explanation = await _HandleExplanation(canonicalWord, learningLanguageCode, explanationLanguageCode, wordCollectionId, aiResult);
+                        }, logger);
+                        transactionStopwatch.Stop();
+                        transactionMs = Math.Round(transactionStopwatch.Elapsed.TotalMilliseconds, 1);
+                    }
+                    catch (Exception ex)
+                    {
+                        transactionStopwatch.Stop();
+                        transactionMs = Math.Round(transactionStopwatch.Elapsed.TotalMilliseconds, 1);
+                        logger.LogError(ex, "Database transaction block failed for word '{WordText}'", wordTextTrimmed);
+                        throw;
                     }
                 }
 
@@ -487,7 +450,7 @@ namespace NewWords.Api.Services
         /// the configured free-word cap tries to add a genuinely new saved word (issue #37).
         /// <paramref name="targetExplanationId"/> is the explanation this add would link a UserWord
         /// to (null when none exists yet for this language pair). The add is exempt when the user
-        /// already owns a UserWord for that explanation — re-add, cached re-add, or the #23 retry.
+        /// already owns a UserWord for that explanation — a re-add or a cached re-add.
         /// </summary>
         private async Task EnforceFreeWordCapAsync(int userId, long? targetExplanationId)
         {
@@ -547,44 +510,17 @@ namespace NewWords.Api.Services
 
 
         private async Task<WordExplanation> _HandleExplanation(string wordText, string learningLanguageCode, string explanationLanguageCode,
-            long wordCollectionId, ExplanationResult? aiResult)
+            long wordCollectionId, ExplanationResult aiResult)
         {
-            var aiSuccess = aiResult != null && aiResult.IsSuccess && !string.IsNullOrWhiteSpace(aiResult.Markdown);
-
             var explanation = await wordExplanationRepository.GetFirstOrDefaultAsync(we =>
                 we.WordCollectionId == wordCollectionId &&
                 we.LearningLanguage == learningLanguageCode &&
                 we.ExplanationLanguage == explanationLanguageCode);
 
-            if (explanation is not null)
-            {
-                // A Ready row is authoritative; a Pending row with no fresh AI result stays pending.
-                if (explanation.Status != ExplanationStatus.Pending || !aiSuccess)
-                {
-                    return explanation;
-                }
+            if (explanation is not null) return explanation;
 
-                // Pending row + fresh AI success: fill it in place rather than returning it stale.
-                explanation.MarkdownExplanation = aiResult!.Markdown!;
-                explanation.ProviderModelName = aiResult.ModelName;
-                explanation.Status = ExplanationStatus.Ready;
-                await wordExplanationRepository.UpdateAsync(explanation);
-                logger.LogInformation("Filled pre-existing pending explanation in place for word '{WordText}'", wordText);
-                return explanation;
-            }
-
-            // No existing row: insert a Ready explanation from the AI result, or a Pending placeholder
-            // when the AI is unavailable so the add-word transaction still commits the user's word.
-            if (aiSuccess)
-            {
-                logger.LogInformation("Reusing AI result for word '{WordText}' from provider {Provider}",
-                    wordText, aiResult!.ModelName);
-            }
-            else
-            {
-                logger.LogWarning("Persisting pending explanation for word '{WordText}' (AI unavailable: {ErrorMessage})",
-                    wordText, aiResult?.ErrorMessage ?? "null result");
-            }
+            logger.LogInformation("Reusing AI result for word '{WordText}' from provider {Provider}",
+                wordText, aiResult.ModelName);
 
             var newExplanation = new WordExplanation
             {
@@ -592,9 +528,8 @@ namespace NewWords.Api.Services
                 WordText = wordText,
                 LearningLanguage = learningLanguageCode,
                 ExplanationLanguage = explanationLanguageCode,
-                MarkdownExplanation = aiSuccess ? aiResult!.Markdown! : BuildPendingPlaceholder(wordText),
-                ProviderModelName = aiSuccess ? aiResult!.ModelName : null,
-                Status = aiSuccess ? ExplanationStatus.Ready : ExplanationStatus.Pending,
+                MarkdownExplanation = aiResult.Markdown!,
+                ProviderModelName = aiResult.ModelName,
                 CreatedAt = DateTime.UtcNow.ToUnixTimeSeconds(),
             };
             var newExplanationId = await wordExplanationRepository.InsertReturnIdentityAsync(newExplanation);
@@ -602,127 +537,6 @@ namespace NewWords.Api.Services
             return newExplanation;
         }
 
-        /// <summary>
-        /// Placeholder markdown stored on a Pending explanation. Valid markdown so existing clients render
-        /// it safely; the frontend can switch on the numeric <see cref="WordExplanation.Status"/> field.
-        /// </summary>
-        private static string BuildPendingPlaceholder(string word)
-            => $"**{word}**\n\n_The explanation is being generated and will appear shortly._";
-
-        /// <summary>
-        /// Fill a Pending explanation with a fresh, successful AI result. Runs the same canonical-word /
-        /// typo-correction path as the online add flow (<see cref="EnsureCanonicalWordAsync"/>), then updates
-        /// the row in place inside a transaction. Shared by inline re-add retry and the background worker.
-        /// </summary>
-        internal async Task FillPendingExplanationAsync(WordExplanation pending, ExplanationResult aiResult)
-        {
-            await TransactionHelper.ExecuteInTransactionAsync(db, async () =>
-            {
-                var canonical = ExtractCanonicalWordFromMarkdown(aiResult.Markdown ?? string.Empty);
-                if (string.IsNullOrWhiteSpace(canonical)) canonical = pending.WordText;
-
-                var originalCollectionId = pending.WordCollectionId;
-                var canonicalCollectionId = await EnsureCanonicalWordAsync(pending.WordText, canonical);
-
-                if (canonicalCollectionId != originalCollectionId)
-                {
-                    // Late typo correction merged this word into a different, already-existing collection.
-                    // Guard the (WordCollectionId, LearningLanguage, ExplanationLanguage, ProviderModelName)
-                    // unique index: if a Ready explanation already exists for the canonical tuple, relink the
-                    // user words to it and drop the pending row rather than updating it into a duplicate.
-                    var existingReady = await wordExplanationRepository.GetFirstOrDefaultAsync(we =>
-                        we.WordCollectionId == canonicalCollectionId &&
-                        we.LearningLanguage == pending.LearningLanguage &&
-                        we.ExplanationLanguage == pending.ExplanationLanguage &&
-                        we.Status == ExplanationStatus.Ready);
-
-                    if (existingReady != null)
-                    {
-                        await userWordRepository.UpdateAsync(
-                            uw => new UserWord { WordExplanationId = existingReady.Id, WordCollectionId = canonicalCollectionId },
-                            uw => uw.WordExplanationId == pending.Id);
-                        await wordExplanationRepository.DeleteAsync(pending);
-                        logger.LogInformation("Pending explanation {PendingId} superseded by existing ready explanation {ReadyId} for word '{WordText}'",
-                            pending.Id, existingReady.Id, canonical);
-
-                        // Reflect the surviving row back to the caller.
-                        pending.Id = existingReady.Id;
-                        pending.WordCollectionId = existingReady.WordCollectionId;
-                        pending.WordText = existingReady.WordText;
-                        pending.MarkdownExplanation = existingReady.MarkdownExplanation;
-                        pending.ProviderModelName = existingReady.ProviderModelName;
-                        pending.Status = ExplanationStatus.Ready;
-                        return;
-                    }
-
-                    // No conflicting row: relink user words to the canonical collection before updating.
-                    await userWordRepository.UpdateAsync(
-                        uw => new UserWord { WordCollectionId = canonicalCollectionId },
-                        uw => uw.WordExplanationId == pending.Id);
-                }
-
-                pending.WordCollectionId = canonicalCollectionId;
-                pending.WordText = canonical;
-                pending.MarkdownExplanation = aiResult.Markdown ?? string.Empty;
-                pending.ProviderModelName = aiResult.ModelName;
-                pending.Status = ExplanationStatus.Ready;
-                await wordExplanationRepository.UpdateAsync(pending);
-                logger.LogInformation("Filled pending explanation {Id} for word '{WordText}' from provider {Provider}",
-                    pending.Id, canonical, aiResult.ModelName);
-            }, logger);
-        }
-
-        /// <summary>
-        /// Background-worker entry point: fill up to <paramref name="batchSize"/> pending explanations
-        /// (oldest first) whose <see cref="WordExplanation.RetryCount"/> is below <paramref name="maxRetryCount"/>.
-        /// On a successful LLM call the row is filled; on failure its RetryCount is incremented so a
-        /// permanently-unexplainable word eventually stops auto-retrying. Returns the number of rows filled.
-        /// </summary>
-        public async Task<int> RetryPendingExplanationsAsync(int batchSize = 20, int maxRetryCount = 20)
-        {
-            var pendingRows = await wordExplanationRepository.GetListAsync(
-                batchSize,
-                we => we.Status == ExplanationStatus.Pending && we.RetryCount < maxRetryCount,
-                we => we.CreatedAt,
-                true);
-
-            if (pendingRows.Count == 0)
-            {
-                return 0;
-            }
-
-            logger.LogInformation("ExplanationRetry: processing {Count} pending explanation(s)", pendingRows.Count);
-
-            var filled = 0;
-            foreach (var row in pendingRows)
-            {
-                var learningLanguageName = configurationService.GetLanguageName(row.LearningLanguage);
-                var explanationLanguageName = configurationService.GetLanguageName(row.ExplanationLanguage);
-                if (learningLanguageName == null || explanationLanguageName == null)
-                {
-                    logger.LogWarning("ExplanationRetry: skipping row {Id}; unknown language code(s) learning={Learning} explanation={Explanation}",
-                        row.Id, row.LearningLanguage, row.ExplanationLanguage);
-                    continue;
-                }
-
-                var aiResult = await InvokeAiServiceAsync(row.WordText, explanationLanguageName, learningLanguageName);
-                if (aiResult.IsSuccess && !string.IsNullOrWhiteSpace(aiResult.Markdown))
-                {
-                    await FillPendingExplanationAsync(row, aiResult);
-                    filled++;
-                }
-                else
-                {
-                    row.RetryCount++;
-                    await wordExplanationRepository.UpdateAsync(row);
-                    logger.LogWarning("ExplanationRetry: fill failed for word '{WordText}', RetryCount now {RetryCount}",
-                        row.WordText, row.RetryCount);
-                }
-            }
-
-            logger.LogInformation("ExplanationRetry: filled {Filled}/{Total} pending explanation(s)", filled, pendingRows.Count);
-            return filled;
-        }
         // ...existing code...
 
         /// <summary>

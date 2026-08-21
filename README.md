@@ -34,8 +34,8 @@ non-null and still in the future; otherwise they are **free**.
   when the add would create a genuinely new saved word — including a word already cached by
   other users. The block returns the distinct business error code `42901`
   (`EntitlementConstants.FreeWordCapReachedErrorCode`) so the client can show a paywall rather
-  than a generic failure. Re-adding a word you already own (and the pending "Generate now"
-  retry) is never blocked. Premium users have no cap.
+  than a generic failure. Re-adding a word you already own is never blocked. Premium users have
+  no cap.
 - **Legacy accounts:** the cap applies uniformly to every non-premium account, including
   accounts created before issue #37. Existing words are retained, but a non-premium account at
   the cap is blocked from genuinely new adds with `42901`. There is no legacy backfill or
