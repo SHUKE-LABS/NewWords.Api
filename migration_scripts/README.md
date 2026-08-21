@@ -47,6 +47,11 @@ source migration_scripts/09_word_explanations_pending_status.sql
 source migration_scripts/10_user_entitlements.sql
 ```
 
+If the first automated deploy has **not** happened yet, `11_word_explanations_drop_pending_status.sql`
+belongs in that same manual list (run it last, and only after the pre-deploy fill step documented in
+its section below) — otherwise the baseline records it as applied without executing it and the
+`Status`/`RetryCount` columns stay behind while the code no longer maps them.
+
 (Both are idempotent; re-running is safe.) A fresh, empty database has no baseline
 to preserve, so run all scripts manually once before the first deploy there too.
 
@@ -67,11 +72,32 @@ This migration adds an `UpdatedAt` field to the `UserWords` table to enable sort
 ### 07: Multiple Explanations Support Migration
 This migration adds `WordCollectionId` to the `UserWords` table and updates the unique constraint to enable multiple AI-generated explanations per word with user-specific default selection.
 
-### 09: Pending Explanation Status Migration
-This migration adds `Status` (`TINYINT NOT NULL DEFAULT 0`; `0 = Ready`, `1 = Pending`) and `RetryCount` (`INT NOT NULL DEFAULT 0`) to the `WordExplanations` table, plus an index on `Status`. When every LLM agent fails at add-word time, the word is persisted immediately with a `Pending` placeholder explanation instead of rolling back; inline re-add retry and the `ExplanationRetryBackgroundService` (every 30 min, batch 20, `RetryCount` cap 20) later fill it and flip it to `Ready`. Idempotent; existing rows read as `Ready`.
+### 09: Pending Explanation Status Migration — **superseded by 11**
+This migration added `Status` (`TINYINT NOT NULL DEFAULT 0`; `0 = Ready`, `1 = Pending`) and `RetryCount` (`INT NOT NULL DEFAULT 0`) to the `WordExplanations` table, plus an index on `Status`, to back the pending-explanation flow (a placeholder row written when every LLM agent failed at add-word time, filled later by inline re-add retry or a background worker). **That mechanism was removed in issue #52** and migration `11` drops both columns and the index. `09` is kept only for history — on a fresh database it still runs first (adding the columns) and `11` then removes them, which is harmless.
 
 ### 10: User Entitlements Table Migration
 This migration creates the `UserEntitlements` table backing server-side subscription state (issue #37): `Id` (PK), `UserId` (unique), `PremiumExpiresAt` (`BIGINT NULL`, unix seconds), `Store` (`VARCHAR(32) NULL`), `OriginalTransactionId` (`VARCHAR(255) NULL`), `CreatedAt`/`UpdatedAt` (`BIGINT NOT NULL`). A user is premium iff `PremiumExpiresAt` is non-null and greater than now. The table powers the `GET /Entitlement/Status` endpoint and the non-premium 500-word free cap enforced in `AddUserWordAsync` before any LLM call. The cap applies uniformly to non-premium accounts, including accounts created before issue #37; existing over-cap words remain, but there is no legacy backfill or separate cap-exemption state, and new adds at the cap return `42901`. User 1's existing manual premium grant is the explicit durable/long-term operational exception. Reopen the grandfathering question if a future bulk import reintroduces pre-cap accounts. Store receipt verification (which populates `Store` / `OriginalTransactionId`) is a separate ticket. Fully idempotent (`CREATE TABLE IF NOT EXISTS` + existence-checked unique index).
+
+### 11: Drop Pending Explanation Status Migration
+This migration reverts `09`: an add now returns a real explanation or fails (issue #52), so no row
+can ever be `Pending` again. It deletes every surviving `Status = 1` row **and the `UserWords` rows
+pointing at it**, then drops `IX_WordExplanations_Status`, `RetryCount`, and `Status` — in that
+order, so no placeholder markdown survives to later read as `Ready`. Fully idempotent: once `Status`
+is gone every step is a no-op.
+
+**Pre-deploy operator step (the final best-effort fill pass).** Deploys apply migrations *before*
+the service restart, so no code shipped with this migration can fill pending rows ahead of the
+column drop — only the *outgoing* build's `ExplanationRetryBackgroundService` (every 30 min) and its
+inline re-add retry can. So before triggering the manual production deploy that carries `11`:
+
+```sql
+SELECT COUNT(*) FROM WordExplanations WHERE Status = 1;   -- anything to save?
+UPDATE WordExplanations SET RetryCount = 0 WHERE Status = 1;  -- re-arm rows parked at the cap
+```
+
+then wait at least one worker cycle (30 min) and re-check the count. Whatever is still `Status = 1`
+when the deploy runs is deleted by this migration — those users must re-add the word, which now
+either returns a real explanation or fails.
 
 ## Migration Steps
 
