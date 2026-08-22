@@ -1,0 +1,10 @@
+name: ci-light probe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: [self-hosted, Linux, ci-light]
+    steps:
+      - run: echo "runner=$RUNNER_NAME on $(hostname)"
