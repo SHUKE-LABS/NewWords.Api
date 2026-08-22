@@ -12,7 +12,8 @@ env:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Self-hosted ci-light pool — this workflow fires on every master push/PR.
+    runs-on: [self-hosted, Linux, ci-light]
 
     steps:
       - uses: actions/checkout@v3
@@ -39,7 +40,7 @@ jobs:
     # from the Actions tab (Run workflow), which triggers the full pipeline below
     # — migrations + restart + post-restart crash-loop health check.
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, ci-light]
 
     steps:
       - uses: actions/checkout@v3
@@ -71,29 +72,12 @@ jobs:
           VERSION_INFO="$COMMIT_HASH ($BUILD_DATE)"
           sed -i "s/VERSION_PLACEHOLDER/$VERSION_INFO/" ./publish/appsettings.json
 
-      - name: Create SSH key file
-        run: |
-          mkdir -p $HOME/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > $HOME/.ssh/id_ed25519
-          chmod 600 $HOME/.ssh/id_ed25519
-          # Optional: Add known hosts to avoid fingerprint prompts
-          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> $HOME/.ssh/known_hosts
-          # Add debugging information
-          echo "=== SSH Directory Contents ==="
-          ls -la $HOME/.ssh/
-          echo "=== Key File Size ==="
-          stat -c %s $HOME/.ssh/id_ed25519
-          echo "=== First line of key file (safe to show) ==="
-          head -n 1 $HOME/.ssh/id_ed25519
-          echo "Current directory: $(pwd)"
-          echo "Home directory: $HOME"
-
       - name: Deploy to production and replace placeholders - prepare directory
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
-          key_path: /home/runner/.ssh/id_ed25519
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
             mkdir -p ${{ secrets.DEPLOY_PATH }}
@@ -103,7 +87,7 @@ jobs:
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
-          key_path: /home/runner/.ssh/id_ed25519
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
           source: "publish/*"
           target: ${{ secrets.DEPLOY_PATH }}
@@ -114,7 +98,7 @@ jobs:
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
-          key_path: /home/runner/.ssh/id_ed25519
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
             # Apply pending migration_scripts/*.sql BEFORE the restart so the new
@@ -131,7 +115,7 @@ jobs:
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
-          key_path: /home/runner/.ssh/id_ed25519
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
             printf "%s\n" "[Unit]" \
@@ -161,7 +145,7 @@ jobs:
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
-          key_path: /home/runner/.ssh/id_ed25519
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
             # A crash-looping process (e.g. a startup throw under Restart=always /
